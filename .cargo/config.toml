@@ -1,0 +1,8 @@
+[env]
+PKG_CONFIG_PATH = { value = "/home/numair/.local/lib64/pkgconfig" }
+LIBCLANG_PATH = { value = "/home/numair/.local/lib64" }
+BINDGEN_EXTRA_CLANG_ARGS = { value = "-I/usr/lib/gcc/x86_64-redhat-linux/16/include" }
+LIBRARY_PATH = { value = "/home/numair/.local/lib64" }
+
+[build]
+rustflags = ["-L", "/home/numair/.local/lib64"]

@@ -1,0 +1,17 @@
+[package]
+name = "aire"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+gpui = { git = "https://github.com/zed-industries/zed.git", rev = "ced90fc636c4ede05402befc38a63bae7fd741bd" }
+gpui_platform = { git = "https://github.com/zed-industries/zed.git", rev = "ced90fc636c4ede05402befc38a63bae7fd741bd", features = ["wayland", "x11"] }
+ashpd = { version = "0.13", default-features = false, features = ["async-io", "screencast"] }
+pipewire = "0.10.1"
+image = "0.25"
+smallvec = "1.13"
+anyhow = "1.0"
+futures = "0.3"
+parking_lot = "0.12"
+crossbeam-channel = "0.5"
+async-io = "2.3"
