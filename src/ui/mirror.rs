@@ -8,7 +8,10 @@ use gpui::{
     ScrollWheelEvent, WeakEntity, Window,
 };
 
-use crate::capture::{CaptureEvent, CaptureReceiver, WindowCapture};
+use crate::{
+    capture::{CaptureEvent, CaptureReceiver, WindowCapture},
+    window::set_window_resize_constraint,
+};
 
 pub struct MirrorView {
     capture: Box<dyn WindowCapture>,
@@ -22,12 +25,58 @@ pub struct MirrorView {
     error_message: Option<String>,
     last_window_width: f32,
     last_window_height: f32,
-    last_kwin_w: f32,
-    last_kwin_h: f32,
     needs_aspect_adaptation: bool,
 }
 
 impl MirrorView {
+    pub fn compute_min_max_bounds(aspect_ratio: f32, disp_w: f32, disp_h: f32) -> ((f32, f32), (f32, f32)) {
+        let aspect = if aspect_ratio > 0.05 {
+            aspect_ratio
+        } else {
+            16.0 / 9.0
+        };
+
+        // Minimum size (at least 240px wide for landscape, or 240px tall for portrait)
+        let (min_w, min_h) = if aspect >= 1.0 {
+            let w = 240.0f32;
+            let h = (w / aspect).round().max(135.0);
+            let w = (h * aspect).round();
+            (w, h)
+        } else {
+            let h = 240.0f32;
+            let w = (h * aspect).round().max(160.0);
+            let h = (w / aspect).round();
+            (w, h)
+        };
+
+        // Maximum size (at most 75% of screen size, capped at 1440x850)
+        let max_bound_w = (disp_w * 0.75).min(1440.0);
+        let max_bound_h = (disp_h * 0.75).min(850.0);
+        let (max_w, max_h) = if aspect >= 1.0 {
+            let w = max_bound_w;
+            let h = (w / aspect).round();
+            if h > max_bound_h {
+                let h = max_bound_h;
+                let w = (h * aspect).round();
+                (w, h)
+            } else {
+                (w, h)
+            }
+        } else {
+            let h = max_bound_h;
+            let w = (h * aspect).round();
+            if w > max_bound_w {
+                let w = max_bound_w;
+                let h = (w / aspect).round();
+                (w, h)
+            } else {
+                (w, h)
+            }
+        };
+
+        ((min_w, min_h), (max_w, max_h))
+    }
+
     pub fn new(
         cx: &mut Context<Self>,
         capture: Box<dyn WindowCapture>,
@@ -36,6 +85,10 @@ impl MirrorView {
         initial_width: u32,
         initial_height: u32,
     ) -> Self {
+        let (min_bounds, max_bounds) =
+            Self::compute_min_max_bounds(initial_aspect_ratio, 1920.0, 1080.0);
+        set_window_resize_constraint(Some(initial_aspect_ratio), Some(min_bounds), Some(max_bounds));
+
         // Spawn background listener for capture events (100% non-blocking)
         cx.spawn(async move |this: WeakEntity<Self>, cx| {
             let mut frames_this_sec = 0;
@@ -168,8 +221,6 @@ impl MirrorView {
             error_message: None,
             last_window_width: 0.0,
             last_window_height: 0.0,
-            last_kwin_w: 0.0,
-            last_kwin_h: 0.0,
             needs_aspect_adaptation: false,
         }
     }
@@ -177,7 +228,7 @@ impl MirrorView {
 
 impl Render for MirrorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // 1. Maintain Locked Aspect Ratio during source resize and interactive window resizing
+        // 1. Sync Wayland protocol-level aspect ratio & boundary constraints
         if !self.is_minimized {
             let bounds = window.bounds();
             let raw_w = f32::from(bounds.size.width);
@@ -189,7 +240,6 @@ impl Render for MirrorView {
                 16.0 / 9.0
             };
 
-            // Determine display bounds to establish maximum window boundaries
             let (disp_w, disp_h) = window
                 .display(cx)
                 .map(|d| {
@@ -200,79 +250,22 @@ impl Render for MirrorView {
                 })
                 .unwrap_or((1920.0, 1080.0));
 
-            // Minimum size (at least 240px wide for landscape, or 240px tall for portrait)
-            let (min_w, min_h) = if aspect >= 1.0 {
-                let w = 240.0f32;
-                let h = (w / aspect).round().max(135.0);
-                (w, h)
-            } else {
-                let h = 240.0f32;
-                let w = (h * aspect).round().max(160.0);
-                (w, h)
-            };
+            let ((min_w, min_h), (max_w, max_h)) =
+                Self::compute_min_max_bounds(aspect, disp_w, disp_h);
 
-            // Maximum size (at most 75% of screen size, capped at 1440x850)
-            let max_bound_w = (disp_w * 0.75).min(1440.0);
-            let max_bound_h = (disp_h * 0.75).min(850.0);
-            let (max_w, max_h) = if aspect >= 1.0 {
-                let w = max_bound_w;
-                let h = (w / aspect).round();
-                if h > max_bound_h {
-                    let h = max_bound_h;
-                    let w = (h * aspect).round();
-                    (w, h)
-                } else {
-                    (w, h)
-                }
-            } else {
-                let h = max_bound_h;
-                let w = (h * aspect).round();
-                if w > max_bound_w {
-                    let w = max_bound_w;
-                    let h = (w / aspect).round();
-                    (w, h)
-                } else {
-                    (w, h)
-                }
-            };
+            set_window_resize_constraint(Some(aspect), Some((min_w, min_h)), Some((max_w, max_h)));
 
             if self.needs_aspect_adaptation {
                 self.needs_aspect_adaptation = false;
                 let w = raw_w.clamp(min_w, max_w);
                 let h = (w / aspect).round().clamp(min_h, max_h);
-                let w = (h * aspect).round();
+                let w = (h * aspect).round().clamp(min_w, max_w);
                 self.last_window_width = w;
                 self.last_window_height = h;
-                self.last_kwin_w = w;
-                self.last_kwin_h = h;
                 if (raw_w - w).abs() >= 1.0 || (raw_h - h).abs() >= 1.0 {
                     window.resize(size(px(w), px(h)));
                 }
-            } else if self.last_kwin_w > 0.0 && self.last_kwin_h > 0.0 {
-                // If KWin's incoming configure size changed by >= 2px, enforce strict aspect ratio
-                let kwin_input_changed = (raw_w - self.last_kwin_w).abs() >= 2.0
-                    || (raw_h - self.last_kwin_h).abs() >= 2.0;
-
-                if kwin_input_changed {
-                    self.last_kwin_w = raw_w;
-                    self.last_kwin_h = raw_h;
-
-                    // Project (raw_w, raw_h) onto the aspect-ratio ray: (aspect, 1.0)
-                    let t = (raw_w * aspect + raw_h) / (aspect * aspect + 1.0);
-                    let target_h = t.round().clamp(min_h, max_h);
-                    let target_w = (target_h * aspect).round().clamp(min_w, max_w);
-                    let target_h = (target_w / aspect).round();
-
-                    self.last_window_width = target_w;
-                    self.last_window_height = target_h;
-
-                    if (raw_w - target_w).abs() >= 1.0 || (raw_h - target_h).abs() >= 1.0 {
-                        window.resize(size(px(target_w), px(target_h)));
-                    }
-                }
             } else {
-                self.last_kwin_w = raw_w;
-                self.last_kwin_h = raw_h;
                 self.last_window_width = raw_w;
                 self.last_window_height = raw_h;
             }
@@ -337,9 +330,30 @@ impl Render for MirrorView {
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.is_minimized = false;
                             this.capture.resume();
+                            let (disp_w, disp_h) = window
+                                .display(cx)
+                                .map(|d| {
+                                    (
+                                        f32::from(d.bounds().size.width),
+                                        f32::from(d.bounds().size.height),
+                                    )
+                                })
+                                .unwrap_or((1920.0, 1080.0));
+                            let aspect = if this.aspect_ratio > 0.05 {
+                                this.aspect_ratio
+                            } else {
+                                16.0 / 9.0
+                            };
+                            let (min_bounds, max_bounds) =
+                                Self::compute_min_max_bounds(aspect, disp_w, disp_h);
+                            set_window_resize_constraint(
+                                Some(aspect),
+                                Some(min_bounds),
+                                Some(max_bounds),
+                            );
                             window.resize(size(
-                                px(this.last_window_width.max(240.0)),
-                                px(this.last_window_height.max(135.0)),
+                                px(this.last_window_width.max(min_bounds.0)),
+                                px(this.last_window_height.max(min_bounds.1)),
                             ));
                             cx.notify();
                         }))
@@ -521,49 +535,16 @@ impl Render for MirrorView {
                     })
                     .unwrap_or((1920.0, 1080.0));
 
-                let (min_w, min_h) = if aspect >= 1.0 {
-                    let w = 240.0f32;
-                    let h = (w / aspect).round().max(135.0);
-                    (w, h)
-                } else {
-                    let h = 240.0f32;
-                    let w = (h * aspect).round().max(160.0);
-                    (w, h)
-                };
-
-                let max_bound_w = (disp_w * 0.75).min(1440.0);
-                let max_bound_h = (disp_h * 0.75).min(850.0);
-                let (max_w, max_h) = if aspect >= 1.0 {
-                    let w = max_bound_w;
-                    let h = (w / aspect).round();
-                    if h > max_bound_h {
-                        let h = max_bound_h;
-                        let w = (h * aspect).round();
-                        (w, h)
-                    } else {
-                        (w, h)
-                    }
-                } else {
-                    let h = max_bound_h;
-                    let w = (h * aspect).round();
-                    if w > max_bound_w {
-                        let w = max_bound_w;
-                        let h = (w / aspect).round();
-                        (w, h)
-                    } else {
-                        (w, h)
-                    }
-                };
+                let ((min_w, min_h), (max_w, max_h)) =
+                    Self::compute_min_max_bounds(aspect, disp_w, disp_h);
 
                 let target_w = (cur_w * scale_factor).round().clamp(min_w, max_w);
                 let target_h = (target_w / aspect).round().clamp(min_h, max_h);
-                let target_w = (target_h * aspect).round();
+                let target_w = (target_h * aspect).round().clamp(min_w, max_w);
 
                 if (cur_w - target_w).abs() >= 1.0 || (cur_h - target_h).abs() >= 1.0 {
                     this.last_window_width = target_w;
                     this.last_window_height = target_h;
-                    this.last_kwin_w = target_w;
-                    this.last_kwin_h = target_h;
                     window.resize(size(px(target_w), px(target_h)));
                 }
             }))
@@ -787,6 +768,11 @@ impl Render for MirrorView {
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.is_minimized = true;
                                 this.capture.pause();
+                                set_window_resize_constraint(
+                                    None,
+                                    Some((180.0, 36.0)),
+                                    Some((180.0, 36.0)),
+                                );
                                 window.resize(size(px(180.0), px(36.0)));
                                 cx.notify();
                             }))

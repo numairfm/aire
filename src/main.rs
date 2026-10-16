@@ -64,6 +64,17 @@ fn main() -> Result<()> {
         let origin_x = display_bounds.origin.x + (display_bounds.size.width - win_width) / 2.0;
         let origin_y = display_bounds.origin.y + (display_bounds.size.height - win_height) / 2.0;
 
+        let (min_bounds, max_bounds) = MirrorView::compute_min_max_bounds(
+            aspect_ratio,
+            f32::from(display_bounds.size.width),
+            f32::from(display_bounds.size.height),
+        );
+        crate::window::set_window_resize_constraint(
+            Some(aspect_ratio),
+            Some(min_bounds),
+            Some(max_bounds),
+        );
+
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds {
                 origin: Point::new(origin_x, origin_y),
@@ -76,7 +87,7 @@ fn main() -> Result<()> {
             kind: WindowKind::Normal,
             is_movable: true,
             is_resizable: true,
-            window_min_size: Some(Size::new(px(180.0), px(36.0))),
+            window_min_size: Some(Size::new(px(min_bounds.0), px(min_bounds.1))),
             ..Default::default()
         };
 

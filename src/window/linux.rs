@@ -109,4 +109,12 @@ impl LinuxWindowManager {
 
         Ok(())
     }
+
+    pub fn set_resize_constraint(
+        aspect_ratio: Option<f32>,
+        min_size: Option<(f32, f32)>,
+        max_size: Option<(f32, f32)>,
+    ) {
+        gpui_linux::set_wayland_resize_constraint(aspect_ratio, min_size, max_size);
+    }
 }

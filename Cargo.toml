@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 gpui = { git = "https://github.com/zed-industries/zed.git", rev = "ced90fc636c4ede05402befc38a63bae7fd741bd" }
+gpui_linux = { git = "https://github.com/zed-industries/zed.git", rev = "ced90fc636c4ede05402befc38a63bae7fd741bd", features = ["wayland", "x11"] }
 gpui_platform = { git = "https://github.com/zed-industries/zed.git", rev = "ced90fc636c4ede05402befc38a63bae7fd741bd", features = ["wayland", "x11"] }
 ashpd = { version = "0.13", default-features = false, features = ["async-io", "screencast"] }
 pipewire = "0.10.1"
@@ -16,3 +17,6 @@ parking_lot = "0.12"
 crossbeam-channel = "0.5"
 async-channel = "2.3"
 async-io = "2.3"
+
+[patch."https://github.com/zed-industries/zed.git"]
+gpui_linux = { path = "patches/gpui_linux" }
