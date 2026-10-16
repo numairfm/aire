@@ -23,6 +23,7 @@ pub struct MirrorView {
     last_window_width: f32,
     last_window_height: f32,
     needs_aspect_adaptation: bool,
+    active_resize_edge: Option<ResizeEdge>,
 }
 
 impl MirrorView {
@@ -167,60 +168,117 @@ impl MirrorView {
             last_window_width: 0.0,
             last_window_height: 0.0,
             needs_aspect_adaptation: false,
+            active_resize_edge: None,
         }
     }
 }
 
 impl Render for MirrorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // 1. Maintain Locked Aspect Ratio & Handle Source Resizing
+        // 1. Maintain Locked Aspect Ratio & Handle Source Resizing / User Resizing
         if !self.is_minimized {
             let bounds = window.bounds();
             let current_w = f32::from(bounds.size.width);
             let current_h = f32::from(bounds.size.height);
 
-            // Compute minimum bounds clamped to aspect ratio
-            let min_w = if self.aspect_ratio >= 1.0 {
-                240.0
+            let aspect = if self.aspect_ratio > 0.05 {
+                self.aspect_ratio
             } else {
-                (240.0 * self.aspect_ratio).round().max(140.0)
+                16.0 / 9.0
             };
-            let min_h = if self.aspect_ratio >= 1.0 {
-                (min_w / self.aspect_ratio).round().max(120.0)
+
+            // Determine display bounds to establish maximum window boundaries
+            let (disp_w, disp_h) = window
+                .display(cx)
+                .map(|d| {
+                    (
+                        f32::from(d.bounds().size.width),
+                        f32::from(d.bounds().size.height),
+                    )
+                })
+                .unwrap_or((1920.0, 1080.0));
+
+            // Minimum size (at least 240px wide for landscape, or 240px tall for portrait)
+            let (min_w, min_h) = if aspect >= 1.0 {
+                let w = 240.0f32;
+                let h = (w / aspect).round().max(135.0);
+                (w, h)
             } else {
-                240.0
+                let h = 240.0f32;
+                let w = (h * aspect).round().max(160.0);
+                (w, h)
+            };
+
+            // Maximum size (at most 75% of screen size, capped at 1440x850)
+            let max_bound_w = (disp_w * 0.75).min(1440.0);
+            let max_bound_h = (disp_h * 0.75).min(850.0);
+            let (max_w, max_h) = if aspect >= 1.0 {
+                let w = max_bound_w;
+                let h = (w / aspect).round();
+                if h > max_bound_h {
+                    let h = max_bound_h;
+                    let w = (h * aspect).round();
+                    (w, h)
+                } else {
+                    (w, h)
+                }
+            } else {
+                let h = max_bound_h;
+                let w = (h * aspect).round();
+                if w > max_bound_w {
+                    let w = max_bound_w;
+                    let h = (w / aspect).round();
+                    (w, h)
+                } else {
+                    (w, h)
+                }
             };
 
             if self.needs_aspect_adaptation {
                 self.needs_aspect_adaptation = false;
-                // Preserve current width and adapt height to source aspect ratio
-                let target_w = current_w.max(min_w);
-                let target_h = (target_w / self.aspect_ratio).round().max(min_h);
-                self.last_window_width = target_w;
-                self.last_window_height = target_h;
-                if (current_w - target_w).abs() > 1.5 || (current_h - target_h).abs() > 1.5 {
-                    window.resize(size(px(target_w), px(target_h)));
+                self.active_resize_edge = None;
+                // Preserve current width (clamped) and adapt height to source aspect ratio
+                let w = current_w.clamp(min_w, max_w);
+                let h = (w / aspect).round().clamp(min_h, max_h);
+                let w = (h * aspect).round();
+                self.last_window_width = w;
+                self.last_window_height = h;
+                if (current_w - w).abs() >= 1.0 || (current_h - h).abs() >= 1.0 {
+                    window.resize(size(px(w), px(h)));
                 }
             } else if self.last_window_width > 0.0 && self.last_window_height > 0.0 {
-                let dw = (current_w - self.last_window_width).abs();
-                let dh = (current_h - self.last_window_height).abs();
+                let size_changed = (current_w - self.last_window_width).abs() >= 1.0
+                    || (current_h - self.last_window_height).abs() >= 1.0;
 
-                if dw > 2.0 || dh > 2.0 {
-                    // Resizing occurred! Determine locked dimensions based on which axis drove the resize
-                    let (target_w, target_h) = if dw >= dh {
-                        let w = current_w.max(min_w);
-                        let h = (w / self.aspect_ratio).round().max(min_h);
-                        (w, h)
-                    } else {
-                        let h = current_h.max(min_h);
-                        let w = (h * self.aspect_ratio).round().max(min_w);
-                        (w, h)
+                if size_changed {
+                    let (target_w, target_h) = match self.active_resize_edge {
+                        Some(ResizeEdge::Left | ResizeEdge::Right) => {
+                            let w = current_w.clamp(min_w, max_w);
+                            let h = (w / aspect).round().clamp(min_h, max_h);
+                            let w = (h * aspect).round();
+                            (w, h)
+                        }
+                        Some(ResizeEdge::Top | ResizeEdge::Bottom) => {
+                            let h = current_h.clamp(min_h, max_h);
+                            let w = (h * aspect).round().clamp(min_w, max_w);
+                            let h = (w / aspect).round();
+                            (w, h)
+                        }
+                        _ => {
+                            // Corners or compositor shortcut: orthogonal projection onto (aspect, 1) ray
+                            let t = (current_w * aspect + current_h)
+                                / (aspect * aspect + 1.0);
+                            let h = t.round().clamp(min_h, max_h);
+                            let w = (h * aspect).round().clamp(min_w, max_w);
+                            let h = (w / aspect).round();
+                            (w, h)
+                        }
                     };
 
                     self.last_window_width = target_w;
                     self.last_window_height = target_h;
 
-                    if (current_w - target_w).abs() > 1.5 || (current_h - target_h).abs() > 1.5 {
+                    if (current_w - target_w).abs() >= 1.0 || (current_h - target_h).abs() >= 1.0 {
                         window.resize(size(px(target_w), px(target_h)));
                     }
                 }
@@ -436,9 +494,13 @@ impl Render for MirrorView {
             .shadow_xl()
             .overflow_hidden()
             // Click-drag anywhere on the mirror to move the window
-            .on_mouse_down(gpui::MouseButton::Left, |_, window, _| {
+            .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _, window, _| {
+                this.active_resize_edge = None;
                 window.start_window_move();
-            })
+            }))
+            .on_mouse_up(gpui::MouseButton::Left, cx.listener(|this, _, _, _| {
+                this.active_resize_edge = None;
+            }))
             // Video / Mirror Content Layer (instantly fades to 35% opacity on hover)
             .child(
                 div()
@@ -474,12 +536,13 @@ impl Render for MirrorView {
                     .top_0()
                     .bottom_0()
                     .left_0()
-                    .w(px(6.0))
+                    .w(px(8.0))
                     .cursor_col_resize()
-                    .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
+                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _, window, cx| {
                         cx.stop_propagation();
+                        this.active_resize_edge = Some(ResizeEdge::Left);
                         window.start_window_resize(ResizeEdge::Left);
-                    }),
+                    })),
             )
             // Right edge
             .child(
@@ -488,12 +551,13 @@ impl Render for MirrorView {
                     .top_0()
                     .bottom_0()
                     .right_0()
-                    .w(px(6.0))
+                    .w(px(8.0))
                     .cursor_col_resize()
-                    .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
+                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _, window, cx| {
                         cx.stop_propagation();
+                        this.active_resize_edge = Some(ResizeEdge::Right);
                         window.start_window_resize(ResizeEdge::Right);
-                    }),
+                    })),
             )
             // Top edge
             .child(
@@ -502,12 +566,13 @@ impl Render for MirrorView {
                     .top_0()
                     .left_0()
                     .right_0()
-                    .h(px(6.0))
+                    .h(px(8.0))
                     .cursor_row_resize()
-                    .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
+                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _, window, cx| {
                         cx.stop_propagation();
+                        this.active_resize_edge = Some(ResizeEdge::Top);
                         window.start_window_resize(ResizeEdge::Top);
-                    }),
+                    })),
             )
             // Bottom edge
             .child(
@@ -516,12 +581,13 @@ impl Render for MirrorView {
                     .bottom_0()
                     .left_0()
                     .right_0()
-                    .h(px(6.0))
+                    .h(px(8.0))
                     .cursor_row_resize()
-                    .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
+                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _, window, cx| {
                         cx.stop_propagation();
+                        this.active_resize_edge = Some(ResizeEdge::Bottom);
                         window.start_window_resize(ResizeEdge::Bottom);
-                    }),
+                    })),
             )
             // Bottom-right corner
             .child(
@@ -531,10 +597,11 @@ impl Render for MirrorView {
                     .right_0()
                     .size(px(16.0))
                     .cursor_nwse_resize()
-                    .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
+                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _, window, cx| {
                         cx.stop_propagation();
+                        this.active_resize_edge = Some(ResizeEdge::BottomRight);
                         window.start_window_resize(ResizeEdge::BottomRight);
-                    }),
+                    })),
             )
             // Bottom-left corner
             .child(
@@ -544,10 +611,11 @@ impl Render for MirrorView {
                     .left_0()
                     .size(px(16.0))
                     .cursor_nesw_resize()
-                    .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
+                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _, window, cx| {
                         cx.stop_propagation();
+                        this.active_resize_edge = Some(ResizeEdge::BottomLeft);
                         window.start_window_resize(ResizeEdge::BottomLeft);
-                    }),
+                    })),
             )
             // Top-left corner
             .child(
@@ -557,10 +625,11 @@ impl Render for MirrorView {
                     .left_0()
                     .size(px(16.0))
                     .cursor_nwse_resize()
-                    .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
+                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _, window, cx| {
                         cx.stop_propagation();
+                        this.active_resize_edge = Some(ResizeEdge::TopLeft);
                         window.start_window_resize(ResizeEdge::TopLeft);
-                    }),
+                    })),
             )
             // Top-right corner
             .child(
@@ -570,10 +639,11 @@ impl Render for MirrorView {
                     .right_0()
                     .size(px(16.0))
                     .cursor_nesw_resize()
-                    .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
+                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _, window, cx| {
                         cx.stop_propagation();
+                        this.active_resize_edge = Some(ResizeEdge::TopRight);
                         window.start_window_resize(ResizeEdge::TopRight);
-                    }),
+                    })),
             )
             // Subtle stream metadata badge (Bottom-left)
             .child(
