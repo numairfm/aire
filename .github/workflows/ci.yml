@@ -26,6 +26,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             clang \
+            libclang-dev \
             libpipewire-0.3-dev \
             libxkbcommon-dev \
             libxkbcommon-x11-dev \
@@ -38,6 +39,14 @@ jobs:
             wget \
             file
 
+      - name: Configure Clang for bindgen
+        run: |
+          LIBCLANG=$(find /usr/lib/llvm* -name "libclang.so*" 2>/dev/null | head -n 1)
+          if [ -n "$LIBCLANG" ]; then
+            echo "LIBCLANG_PATH=$(dirname "$LIBCLANG")" >> $GITHUB_ENV
+            echo "Found libclang at $(dirname "$LIBCLANG")"
+          fi
+
       - name: Build release binary
         run: cargo build --release --locked --bin aire
 
@@ -45,11 +54,16 @@ jobs:
         run: |
           mkdir -p AppDir/usr/bin AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/512x512/apps
           cp target/release/aire AppDir/usr/bin/
+          chmod +x AppDir/usr/bin/aire
           cp assets/aire.desktop AppDir/
           cp assets/aire.desktop AppDir/usr/share/applications/
           cp assets/aire.png AppDir/aire.png
           cp assets/aire.png AppDir/usr/share/icons/hicolor/512x512/apps/
-          ln -sf usr/bin/aire AppDir/AppRun
+          cat << 'EOF' > AppDir/AppRun
+          #!/bin/sh
+          HERE="$(dirname "$(readlink -f "${0}")")"
+          exec "${HERE}/usr/bin/aire" "$@"
+          EOF
           chmod +x AppDir/AppRun
 
           wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage -O appimagetool
