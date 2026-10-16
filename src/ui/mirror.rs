@@ -4,7 +4,7 @@ use std::{
 };
 
 use gpui::{
-    canvas, div, point, prelude::*, px, rgb, rgba, size, Context, Entity, FontWeight, PathBuilder,
+    canvas, div, point, prelude::*, px, rgb, size, Context, Entity, FontWeight, PathBuilder,
     Render, RenderImage, ResizeEdge, Rgba, ScrollWheelEvent, Task, WeakEntity, Window,
 };
 
@@ -451,7 +451,7 @@ impl Render for MirrorView {
             }
         }
 
-        // 2. Minimized Pill State (Opaque Black + Crisp White Frosty Border)
+        // 2. Minimized Pill State (Control Panel Black + 1px Dark Grey Outline)
         if self.is_minimized {
             return div()
                 .size_full()
@@ -461,8 +461,8 @@ impl Render for MirrorView {
                 .px_3()
                 .bg(rgb(0x000000))
                 .rounded(px(18.0))
-                .border_3()
-                .border_color(rgba(0xffffffea))
+                .border_1()
+                .border_color(rgb(0x333333))
                 .overflow_hidden()
                 .child(
                     div()
@@ -552,15 +552,15 @@ impl Render for MirrorView {
                 .into_any_element();
         }
 
-        // 3. Source Window Closed State (Opaque Black + Crisp White Frosty Border)
+        // 3. Source Window Closed State (Control Panel Black + 1px Dark Grey Outline)
         if self.source_closed {
             return div()
                 .size_full()
                 .relative()
                 .bg(rgb(0x000000))
                 .rounded(px(14.0))
-                .border_4()
-                .border_color(rgba(0xffffffea))
+                .border_1()
+                .border_color(rgb(0x333333))
                 .overflow_hidden()
                 .flex()
                 .flex_col()
@@ -636,15 +636,15 @@ impl Render for MirrorView {
                 .into_any_element();
         }
 
-        // 4. Error State (Opaque Black + Crisp White Frosty Border)
+        // 4. Error State (Control Panel Black + 1px Dark Grey Outline)
         if let Some(ref err) = self.error_message {
             return div()
                 .size_full()
                 .relative()
                 .bg(rgb(0x000000))
                 .rounded(px(14.0))
-                .border_4()
-                .border_color(rgba(0xffffffea))
+                .border_1()
+                .border_color(rgb(0x333333))
                 .overflow_hidden()
                 .flex()
                 .flex_col()
@@ -756,12 +756,17 @@ impl Render for MirrorView {
         let stream_opacity =
             1.0 - self.current_hover_t * (1.0 - config.hover_opacity.clamp(0.05, 1.0));
         let hud_opacity = self.current_hover_t;
-        let border_alpha = stream_opacity * 0.92;
-        let border_color = Rgba {
-            r: 1.0,
-            g: 1.0,
-            b: 1.0,
-            a: border_alpha,
+        let panel_bg = Rgba {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+            a: stream_opacity,
+        };
+        let outline_color = Rgba {
+            r: 0.22,
+            g: 0.22,
+            b: 0.22,
+            a: stream_opacity,
         };
 
         // Note: No outer box-shadow on the root full-surface div so KWin Wayland never leaves
@@ -770,15 +775,11 @@ impl Render for MirrorView {
             .id("mirror-root")
             .size_full()
             .relative()
-            .bg(Rgba {
-                r: 0.0,
-                g: 0.0,
-                b: 0.0,
-                a: stream_opacity * 0.25,
-            })
+            .bg(panel_bg)
             .rounded(px(14.0))
-            .border_4()
-            .border_color(border_color)
+            .border_1()
+            .border_color(outline_color)
+            .p(px(3.0))
             .overflow_hidden()
             .on_mouse_down(gpui::MouseButton::Left, |_, window, _| {
                 window.start_window_move();
@@ -829,33 +830,43 @@ impl Render for MirrorView {
                     window.resize(size(px(target_w), px(target_h)));
                 }
             }))
-            // Video / Mirror Content Layer
+            // Inner content framed by the second 1px border with the outline color
             .child(
                 div()
                     .size_full()
-                    .opacity(stream_opacity)
-                    .child(if let Some(ref img_data) = self.current_image {
-                        gpui::img(img_data.clone())
-                            .size_full()
-                            .into_any_element()
-                    } else {
+                    .relative()
+                    .rounded(px(10.0))
+                    .border_1()
+                    .border_color(outline_color)
+                    .overflow_hidden()
+                    .child(
+                        // Video / Mirror Content Layer
                         div()
                             .size_full()
-                            .bg(rgb(0x000000))
-                            .flex()
-                            .flex_col()
-                            .items_center()
-                            .justify_center()
-                            .gap_1()
-                            .text_color(rgb(0xa3a3a3))
-                            .child(
+                            .opacity(stream_opacity)
+                            .child(if let Some(ref img_data) = self.current_image {
+                                gpui::img(img_data.clone())
+                                    .size_full()
+                                    .into_any_element()
+                            } else {
                                 div()
-                                    .text_sm()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child("Connecting to window..."),
-                            )
-                            .into_any_element()
-                    }),
+                                    .size_full()
+                                    .bg(rgb(0x000000))
+                                    .flex()
+                                    .flex_col()
+                                    .items_center()
+                                    .justify_center()
+                                    .gap_1()
+                                    .text_color(rgb(0xa3a3a3))
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .child("Connecting to window..."),
+                                    )
+                                    .into_any_element()
+                            }),
+                    ),
             )
             // Native compositor resize handles on all borders and corners
             .child(
