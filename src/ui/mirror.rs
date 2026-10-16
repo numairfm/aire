@@ -4,11 +4,19 @@ use std::{
 };
 
 use gpui::{
-    div, prelude::*, px, rgb, rgba, size, AnyWindowHandle, Context, FontWeight, Render,
-    RenderImage, ResizeEdge, WeakEntity, Window,
+    div, prelude::*, px, rgb, rgba, size, AnyWindowHandle, Context, FontWeight, Point, Pixels,
+    Render, RenderImage, ResizeEdge, ScrollWheelEvent, WeakEntity, Window,
 };
 
 use crate::capture::{CaptureEvent, CaptureReceiver, WindowCapture};
+
+#[derive(Clone, Copy)]
+struct ActiveResize {
+    start_pos: Point<Pixels>,
+    start_size: (f32, f32),
+    edge: ResizeEdge,
+    last_applied_time: Instant,
+}
 
 pub struct MirrorView {
     capture: Box<dyn WindowCapture>,
@@ -23,10 +31,8 @@ pub struct MirrorView {
     last_window_width: f32,
     last_window_height: f32,
     needs_aspect_adaptation: bool,
-    active_resize_edge: Option<ResizeEdge>,
+    active_resize: Option<ActiveResize>,
     window_handle: Option<AnyWindowHandle>,
-    last_resize_time: Arc<parking_lot::Mutex<Instant>>,
-    needs_snap: Arc<parking_lot::Mutex<bool>>,
 }
 
 impl MirrorView {
@@ -38,9 +44,6 @@ impl MirrorView {
         initial_width: u32,
         initial_height: u32,
     ) -> Self {
-        let last_resize_time = Arc::new(parking_lot::Mutex::new(Instant::now()));
-        let needs_snap = Arc::new(parking_lot::Mutex::new(false));
-
         // Spawn background listener for capture events (100% non-blocking)
         cx.spawn(async move |this: WeakEntity<Self>, cx| {
             let mut frames_this_sec = 0;
@@ -161,133 +164,6 @@ impl MirrorView {
         })
         .detach();
 
-        // Background debouncer task: smoothly snaps window to exact aspect ratio after resize completes
-        let this_debouncer = cx.entity().downgrade();
-        let resize_time_checker = last_resize_time.clone();
-        let needs_snap_checker = needs_snap.clone();
-
-        cx.spawn(async move |_this: WeakEntity<Self>, cx| {
-            loop {
-                cx.background_executor().timer(Duration::from_millis(40)).await;
-                let should_snap = {
-                    let snap = *needs_snap_checker.lock();
-                    let last = *resize_time_checker.lock();
-                    snap && last.elapsed() >= Duration::from_millis(150)
-                };
-
-                if should_snap {
-                    *needs_snap_checker.lock() = false;
-                    let _ = this_debouncer.update(cx, |view, cx| {
-                        if view.is_minimized {
-                            return;
-                        }
-                        let Some(wh) = view.window_handle else {
-                            return;
-                        };
-
-                        let active_edge = view.active_resize_edge.take();
-                        let aspect = if view.aspect_ratio > 0.05 {
-                            view.aspect_ratio
-                        } else {
-                            16.0 / 9.0
-                        };
-
-                        let new_size = cx
-                            .update_window(wh, |_, window, cx| {
-                                let bounds = window.bounds();
-                                let current_w = f32::from(bounds.size.width);
-                                let current_h = f32::from(bounds.size.height);
-
-                                let (disp_w, disp_h) = window
-                                    .display(cx)
-                                    .map(|d| {
-                                        (
-                                            f32::from(d.bounds().size.width),
-                                            f32::from(d.bounds().size.height),
-                                        )
-                                    })
-                                    .unwrap_or((1920.0, 1080.0));
-
-                                let (min_w, min_h) = if aspect >= 1.0 {
-                                    let w = 240.0f32;
-                                    let h = (w / aspect).round().max(135.0);
-                                    (w, h)
-                                } else {
-                                    let h = 240.0f32;
-                                    let w = (h * aspect).round().max(160.0);
-                                    (w, h)
-                                };
-
-                                let max_bound_w = (disp_w * 0.75).min(1440.0);
-                                let max_bound_h = (disp_h * 0.75).min(850.0);
-                                let (max_w, max_h) = if aspect >= 1.0 {
-                                    let w = max_bound_w;
-                                    let h = (w / aspect).round();
-                                    if h > max_bound_h {
-                                        let h = max_bound_h;
-                                        let w = (h * aspect).round();
-                                        (w, h)
-                                    } else {
-                                        (w, h)
-                                    }
-                                } else {
-                                    let h = max_bound_h;
-                                    let w = (h * aspect).round();
-                                    if w > max_bound_w {
-                                        let w = max_bound_w;
-                                        let h = (w / aspect).round();
-                                        (w, h)
-                                    } else {
-                                        (w, h)
-                                    }
-                                };
-
-                                let (target_w, target_h) = match active_edge {
-                                    Some(ResizeEdge::Left | ResizeEdge::Right) => {
-                                        let w = current_w.clamp(min_w, max_w);
-                                        let h = (w / aspect).round().clamp(min_h, max_h);
-                                        let w = (h * aspect).round();
-                                        (w, h)
-                                    }
-                                    Some(ResizeEdge::Top | ResizeEdge::Bottom) => {
-                                        let h = current_h.clamp(min_h, max_h);
-                                        let w = (h * aspect).round().clamp(min_w, max_w);
-                                        let h = (w / aspect).round();
-                                        (w, h)
-                                    }
-                                    _ => {
-                                        let t = (current_w * aspect + current_h)
-                                            / (aspect * aspect + 1.0);
-                                        let h = t.round().clamp(min_h, max_h);
-                                        let w = (h * aspect).round().clamp(min_w, max_w);
-                                        let h = (w / aspect).round();
-                                        (w, h)
-                                    }
-                                };
-
-                                if (current_w - target_w).abs() >= 1.0
-                                    || (current_h - target_h).abs() >= 1.0
-                                {
-                                    window.resize(size(px(target_w), px(target_h)));
-                                    Some((target_w, target_h))
-                                } else {
-                                    None
-                                }
-                            })
-                            .ok()
-                            .flatten();
-
-                        if let Some((target_w, target_h)) = new_size {
-                            view.last_window_width = target_w;
-                            view.last_window_height = target_h;
-                            cx.notify();
-                        }
-                    });
-                }
-            }
-        })
-        .detach();
-
         Self {
             capture,
             current_image: None,
@@ -301,10 +177,8 @@ impl MirrorView {
             last_window_width: 0.0,
             last_window_height: 0.0,
             needs_aspect_adaptation: false,
-            active_resize_edge: None,
+            active_resize: None,
             window_handle: None,
-            last_resize_time,
-            needs_snap,
         }
     }
 }
@@ -313,7 +187,7 @@ impl Render for MirrorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.window_handle = Some(window.window_handle());
 
-        // 1. Maintain Locked Aspect Ratio on Source Resizing or track interactive bounds changes
+        // 1. Maintain Locked Aspect Ratio on Source Resizing
         if !self.is_minimized {
             let bounds = window.bounds();
             let current_w = f32::from(bounds.size.width);
@@ -383,15 +257,8 @@ impl Render for MirrorView {
                     window.resize(size(px(w), px(h)));
                 }
             } else {
-                // If bounds changed during resize, update timestamp and flag for snap
-                if (current_w - self.last_window_width).abs() > 0.5
-                    || (current_h - self.last_window_height).abs() > 0.5
-                {
-                    self.last_window_width = current_w;
-                    self.last_window_height = current_h;
-                    *self.last_resize_time.lock() = Instant::now();
-                    *self.needs_snap.lock() = true;
-                }
+                self.last_window_width = current_w;
+                self.last_window_height = current_h;
             }
         }
 
@@ -588,26 +455,6 @@ impl Render for MirrorView {
 
         // 4. Normal Active Mirror HUD
         let is_hovered = window.is_window_hovered();
-        let bounds = window.bounds();
-        let current_w = f32::from(bounds.size.width);
-        let current_h = f32::from(bounds.size.height);
-
-        let aspect = if self.aspect_ratio > 0.05 {
-            self.aspect_ratio
-        } else {
-            16.0 / 9.0
-        };
-
-        // Live unstretched video containment: video is strictly locked to aspect ratio at all times
-        let (vid_w, vid_h) = if (current_w / current_h) > aspect {
-            let h = current_h;
-            let w = (h * aspect).round();
-            (w, h)
-        } else {
-            let w = current_w;
-            let h = (w / aspect).round();
-            (w, h)
-        };
 
         div()
             .id("mirror-root")
@@ -620,23 +467,230 @@ impl Render for MirrorView {
             .border_color(rgba(0xffffff50))
             .shadow_xl()
             .overflow_hidden()
-            // Click-drag anywhere on the mirror to move the window
+            // Click-drag anywhere on the mirror body to move the window
             .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _, window, _| {
-                this.active_resize_edge = None;
+                this.active_resize = None;
                 window.start_window_move();
             }))
-            // Video / Mirror Content Layer (instantly fades to 35% opacity on hover, centered & unstretched)
+            // Release active resize on mouse up
+            .on_mouse_up(gpui::MouseButton::Left, cx.listener(|this, _, _, _| {
+                this.active_resize = None;
+            }))
+            // Continuous, relative, locked aspect-ratio scaling during mouse drag
+            .on_mouse_move(cx.listener(|this, event: &gpui::MouseMoveEvent, window, cx| {
+                if let Some(ref mut resize) = this.active_resize {
+                    let now = Instant::now();
+                    if now.duration_since(resize.last_applied_time) < Duration::from_millis(14) {
+                        return;
+                    }
+
+                    let delta_x = f32::from(event.position.x) - f32::from(resize.start_pos.x);
+                    let delta_y = f32::from(event.position.y) - f32::from(resize.start_pos.y);
+
+                    let (start_w, start_h) = resize.start_size;
+                    let aspect = if this.aspect_ratio > 0.05 {
+                        this.aspect_ratio
+                    } else {
+                        16.0 / 9.0
+                    };
+
+                    let (disp_w, disp_h) = window
+                        .display(cx)
+                        .map(|d| {
+                            (
+                                f32::from(d.bounds().size.width),
+                                f32::from(d.bounds().size.height),
+                            )
+                        })
+                        .unwrap_or((1920.0, 1080.0));
+
+                    let (min_w, min_h) = if aspect >= 1.0 {
+                        let w = 240.0f32;
+                        let h = (w / aspect).round().max(135.0);
+                        (w, h)
+                    } else {
+                        let h = 240.0f32;
+                        let w = (h * aspect).round().max(160.0);
+                        (w, h)
+                    };
+
+                    let max_bound_w = (disp_w * 0.75).min(1440.0);
+                    let max_bound_h = (disp_h * 0.75).min(850.0);
+                    let (max_w, max_h) = if aspect >= 1.0 {
+                        let w = max_bound_w;
+                        let h = (w / aspect).round();
+                        if h > max_bound_h {
+                            let h = max_bound_h;
+                            let w = (h * aspect).round();
+                            (w, h)
+                        } else {
+                            (w, h)
+                        }
+                    } else {
+                        let h = max_bound_h;
+                        let w = (h * aspect).round();
+                        if w > max_bound_w {
+                            let w = max_bound_w;
+                            let h = (w / aspect).round();
+                            (w, h)
+                        } else {
+                            (w, h)
+                        }
+                    };
+
+                    let (target_w, target_h) = match resize.edge {
+                        ResizeEdge::Right => {
+                            let w = (start_w + delta_x).clamp(min_w, max_w);
+                            let h = (w / aspect).round().clamp(min_h, max_h);
+                            let w = (h * aspect).round();
+                            (w, h)
+                        }
+                        ResizeEdge::Bottom => {
+                            let h = (start_h + delta_y).clamp(min_h, max_h);
+                            let w = (h * aspect).round().clamp(min_w, max_w);
+                            let h = (w / aspect).round();
+                            (w, h)
+                        }
+                        ResizeEdge::Left => {
+                            let w = (start_w - delta_x).clamp(min_w, max_w);
+                            let h = (w / aspect).round().clamp(min_h, max_h);
+                            let w = (h * aspect).round();
+                            (w, h)
+                        }
+                        ResizeEdge::Top => {
+                            let h = (start_h - delta_y).clamp(min_h, max_h);
+                            let w = (h * aspect).round().clamp(min_w, max_w);
+                            let h = (w / aspect).round();
+                            (w, h)
+                        }
+                        ResizeEdge::BottomLeft => {
+                            let t = (-delta_x * aspect + delta_y) / (aspect * aspect + 1.0);
+                            let h = (start_h + t).round().clamp(min_h, max_h);
+                            let w = (h * aspect).round().clamp(min_w, max_w);
+                            let h = (w / aspect).round();
+                            (w, h)
+                        }
+                        ResizeEdge::TopRight => {
+                            let t = (delta_x * aspect - delta_y) / (aspect * aspect + 1.0);
+                            let h = (start_h + t).round().clamp(min_h, max_h);
+                            let w = (h * aspect).round().clamp(min_w, max_w);
+                            let h = (w / aspect).round();
+                            (w, h)
+                        }
+                        ResizeEdge::TopLeft => {
+                            let t = (-delta_x * aspect - delta_y) / (aspect * aspect + 1.0);
+                            let h = (start_h + t).round().clamp(min_h, max_h);
+                            let w = (h * aspect).round().clamp(min_w, max_w);
+                            let h = (w / aspect).round();
+                            (w, h)
+                        }
+                        ResizeEdge::BottomRight => {
+                            let t = (delta_x * aspect + delta_y) / (aspect * aspect + 1.0);
+                            let h = (start_h + t).round().clamp(min_h, max_h);
+                            let w = (h * aspect).round().clamp(min_w, max_w);
+                            let h = (w / aspect).round();
+                            (w, h)
+                        }
+                    };
+
+                    let current_bounds = window.bounds();
+                    let cur_w = f32::from(current_bounds.size.width);
+                    let cur_h = f32::from(current_bounds.size.height);
+
+                    if (cur_w - target_w).abs() >= 1.0 || (cur_h - target_h).abs() >= 1.0 {
+                        resize.last_applied_time = now;
+                        this.last_window_width = target_w;
+                        this.last_window_height = target_h;
+                        window.resize(size(px(target_w), px(target_h)));
+                    }
+                }
+            }))
+            // Smooth mouse scroll wheel scaling (strictly locked to aspect ratio)
+            .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, window, cx| {
+                if this.is_minimized || this.active_resize.is_some() {
+                    return;
+                }
+                let delta_y = match event.delta {
+                    gpui::ScrollDelta::Lines(lines) => lines.y * 15.0,
+                    gpui::ScrollDelta::Pixels(pixels) => f32::from(pixels.y),
+                };
+                if delta_y.abs() < 0.5 {
+                    return;
+                }
+
+                let aspect = if this.aspect_ratio > 0.05 {
+                    this.aspect_ratio
+                } else {
+                    16.0 / 9.0
+                };
+
+                let bounds = window.bounds();
+                let cur_w = f32::from(bounds.size.width);
+                let cur_h = f32::from(bounds.size.height);
+
+                let scale_factor = 1.0 + (delta_y / 350.0).clamp(-0.15, 0.15);
+                let (disp_w, disp_h) = window
+                    .display(cx)
+                    .map(|d| {
+                        (
+                            f32::from(d.bounds().size.width),
+                            f32::from(d.bounds().size.height),
+                        )
+                    })
+                    .unwrap_or((1920.0, 1080.0));
+
+                let (min_w, min_h) = if aspect >= 1.0 {
+                    let w = 240.0f32;
+                    let h = (w / aspect).round().max(135.0);
+                    (w, h)
+                } else {
+                    let h = 240.0f32;
+                    let w = (h * aspect).round().max(160.0);
+                    (w, h)
+                };
+
+                let max_bound_w = (disp_w * 0.75).min(1440.0);
+                let max_bound_h = (disp_h * 0.75).min(850.0);
+                let (max_w, max_h) = if aspect >= 1.0 {
+                    let w = max_bound_w;
+                    let h = (w / aspect).round();
+                    if h > max_bound_h {
+                        let h = max_bound_h;
+                        let w = (h * aspect).round();
+                        (w, h)
+                    } else {
+                        (w, h)
+                    }
+                } else {
+                    let h = max_bound_h;
+                    let w = (h * aspect).round();
+                    if w > max_bound_w {
+                        let w = max_bound_w;
+                        let h = (w / aspect).round();
+                        (w, h)
+                    } else {
+                        (w, h)
+                    }
+                };
+
+                let target_w = (cur_w * scale_factor).round().clamp(min_w, max_w);
+                let target_h = (target_w / aspect).round().clamp(min_h, max_h);
+                let target_w = (target_h * aspect).round();
+
+                if (cur_w - target_w).abs() >= 1.0 || (cur_h - target_h).abs() >= 1.0 {
+                    this.last_window_width = target_w;
+                    this.last_window_height = target_h;
+                    window.resize(size(px(target_w), px(target_h)));
+                }
+            }))
+            // Video / Mirror Content Layer (instantly fades to 35% opacity on hover)
             .child(
                 div()
                     .size_full()
-                    .flex()
-                    .items_center()
-                    .justify_center()
                     .opacity(if is_hovered { 0.35 } else { 1.0 })
                     .child(if let Some(ref img_data) = self.current_image {
                         gpui::img(img_data.clone())
-                            .w(px(vid_w))
-                            .h(px(vid_h))
+                            .size_full()
                             .into_any_element()
                     } else {
                         div()
@@ -656,7 +710,7 @@ impl Render for MirrorView {
                             .into_any_element()
                     }),
             )
-            // Native Compositor Resize Handles on all 8 borders and corners
+            // Relative aspect-ratio locked resize handles on all 8 borders and corners
             // Left edge
             .child(
                 div()
@@ -665,12 +719,17 @@ impl Render for MirrorView {
                     .top(px(16.0))
                     .bottom(px(16.0))
                     .left_0()
-                    .w(px(8.0))
+                    .w(px(10.0))
                     .cursor_col_resize()
-                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _, window, cx| {
+                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
                         cx.stop_propagation();
-                        this.active_resize_edge = Some(ResizeEdge::Left);
-                        window.start_window_resize(ResizeEdge::Left);
+                        let bounds = window.bounds();
+                        this.active_resize = Some(ActiveResize {
+                            start_pos: event.position,
+                            start_size: (f32::from(bounds.size.width), f32::from(bounds.size.height)),
+                            edge: ResizeEdge::Left,
+                            last_applied_time: Instant::now(),
+                        });
                     })),
             )
             // Right edge
@@ -681,12 +740,17 @@ impl Render for MirrorView {
                     .top(px(16.0))
                     .bottom(px(16.0))
                     .right_0()
-                    .w(px(8.0))
+                    .w(px(10.0))
                     .cursor_col_resize()
-                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _, window, cx| {
+                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
                         cx.stop_propagation();
-                        this.active_resize_edge = Some(ResizeEdge::Right);
-                        window.start_window_resize(ResizeEdge::Right);
+                        let bounds = window.bounds();
+                        this.active_resize = Some(ActiveResize {
+                            start_pos: event.position,
+                            start_size: (f32::from(bounds.size.width), f32::from(bounds.size.height)),
+                            edge: ResizeEdge::Right,
+                            last_applied_time: Instant::now(),
+                        });
                     })),
             )
             // Top edge
@@ -697,12 +761,17 @@ impl Render for MirrorView {
                     .top_0()
                     .left(px(16.0))
                     .right(px(16.0))
-                    .h(px(8.0))
+                    .h(px(10.0))
                     .cursor_row_resize()
-                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _, window, cx| {
+                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
                         cx.stop_propagation();
-                        this.active_resize_edge = Some(ResizeEdge::Top);
-                        window.start_window_resize(ResizeEdge::Top);
+                        let bounds = window.bounds();
+                        this.active_resize = Some(ActiveResize {
+                            start_pos: event.position,
+                            start_size: (f32::from(bounds.size.width), f32::from(bounds.size.height)),
+                            edge: ResizeEdge::Top,
+                            last_applied_time: Instant::now(),
+                        });
                     })),
             )
             // Bottom edge
@@ -713,12 +782,17 @@ impl Render for MirrorView {
                     .bottom_0()
                     .left(px(16.0))
                     .right(px(16.0))
-                    .h(px(8.0))
+                    .h(px(10.0))
                     .cursor_row_resize()
-                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _, window, cx| {
+                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
                         cx.stop_propagation();
-                        this.active_resize_edge = Some(ResizeEdge::Bottom);
-                        window.start_window_resize(ResizeEdge::Bottom);
+                        let bounds = window.bounds();
+                        this.active_resize = Some(ActiveResize {
+                            start_pos: event.position,
+                            start_size: (f32::from(bounds.size.width), f32::from(bounds.size.height)),
+                            edge: ResizeEdge::Bottom,
+                            last_applied_time: Instant::now(),
+                        });
                     })),
             )
             // Top-left corner
@@ -728,12 +802,17 @@ impl Render for MirrorView {
                     .absolute()
                     .top_0()
                     .left_0()
-                    .size(px(16.0))
+                    .size(px(20.0))
                     .cursor_nwse_resize()
-                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _, window, cx| {
+                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
                         cx.stop_propagation();
-                        this.active_resize_edge = Some(ResizeEdge::TopLeft);
-                        window.start_window_resize(ResizeEdge::TopLeft);
+                        let bounds = window.bounds();
+                        this.active_resize = Some(ActiveResize {
+                            start_pos: event.position,
+                            start_size: (f32::from(bounds.size.width), f32::from(bounds.size.height)),
+                            edge: ResizeEdge::TopLeft,
+                            last_applied_time: Instant::now(),
+                        });
                     })),
             )
             // Top-right corner
@@ -743,12 +822,17 @@ impl Render for MirrorView {
                     .absolute()
                     .top_0()
                     .right_0()
-                    .size(px(16.0))
+                    .size(px(20.0))
                     .cursor_nesw_resize()
-                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _, window, cx| {
+                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
                         cx.stop_propagation();
-                        this.active_resize_edge = Some(ResizeEdge::TopRight);
-                        window.start_window_resize(ResizeEdge::TopRight);
+                        let bounds = window.bounds();
+                        this.active_resize = Some(ActiveResize {
+                            start_pos: event.position,
+                            start_size: (f32::from(bounds.size.width), f32::from(bounds.size.height)),
+                            edge: ResizeEdge::TopRight,
+                            last_applied_time: Instant::now(),
+                        });
                     })),
             )
             // Bottom-left corner
@@ -758,31 +842,41 @@ impl Render for MirrorView {
                     .absolute()
                     .bottom_0()
                     .left_0()
-                    .size(px(16.0))
+                    .size(px(20.0))
                     .cursor_nesw_resize()
-                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _, window, cx| {
+                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
                         cx.stop_propagation();
-                        this.active_resize_edge = Some(ResizeEdge::BottomLeft);
-                        window.start_window_resize(ResizeEdge::BottomLeft);
+                        let bounds = window.bounds();
+                        this.active_resize = Some(ActiveResize {
+                            start_pos: event.position,
+                            start_size: (f32::from(bounds.size.width), f32::from(bounds.size.height)),
+                            edge: ResizeEdge::BottomLeft,
+                            last_applied_time: Instant::now(),
+                        });
                     })),
             )
-            // Bottom-right corner
+            // Bottom-right corner (prominent grip dots on hover)
             .child(
                 div()
                     .id("resize-handle-bottom-right")
                     .absolute()
                     .bottom_0()
                     .right_0()
-                    .size(px(16.0))
+                    .size(px(24.0))
                     .cursor_nwse_resize()
                     .flex()
                     .items_end()
                     .justify_end()
                     .p_1()
-                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _, window, cx| {
+                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
                         cx.stop_propagation();
-                        this.active_resize_edge = Some(ResizeEdge::BottomRight);
-                        window.start_window_resize(ResizeEdge::BottomRight);
+                        let bounds = window.bounds();
+                        this.active_resize = Some(ActiveResize {
+                            start_pos: event.position,
+                            start_size: (f32::from(bounds.size.width), f32::from(bounds.size.height)),
+                            edge: ResizeEdge::BottomRight,
+                            last_applied_time: Instant::now(),
+                        });
                     }))
                     .child(
                         div()
