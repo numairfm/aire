@@ -282,7 +282,7 @@ impl Render for MirrorView {
                 // Light frosty pill glass style
                 .bg(rgba(0xffffffea))
                 .rounded(px(18.0))
-                .border_1()
+                .border_4()
                 .border_color(rgba(0xffffffbb))
                 .shadow_lg()
                 // Left side: Drag handle to move the pill
@@ -376,7 +376,7 @@ impl Render for MirrorView {
                 .relative()
                 .bg(rgba(0xffffff33))
                 .rounded(px(10.0))
-                .border_1()
+                .border_4()
                 .border_color(rgba(0xffffff55))
                 .shadow_xl()
                 .flex()
@@ -433,7 +433,7 @@ impl Render for MirrorView {
                 .relative()
                 .bg(rgba(0xffffff33))
                 .rounded(px(10.0))
-                .border_1()
+                .border_4()
                 .border_color(rgba(0xffffff55))
                 .shadow_xl()
                 .flex()
@@ -493,7 +493,7 @@ impl Render for MirrorView {
             // Frosty light glass styling
             .bg(rgba(0xffffff28))
             .rounded(px(10.0))
-            .border_1()
+            .border_4()
             .border_color(rgba(0xffffff50))
             .shadow_xl()
             .overflow_hidden()
