@@ -779,7 +779,6 @@ impl Render for MirrorView {
             .rounded(px(14.0))
             .border_1()
             .border_color(outline_color)
-            .p(px(3.0))
             .overflow_hidden()
             .on_mouse_down(gpui::MouseButton::Left, |_, window, _| {
                 window.start_window_move();
@@ -830,11 +829,11 @@ impl Render for MirrorView {
                     window.resize(size(px(target_w), px(target_h)));
                 }
             }))
-            // Inner content framed by the second 1px border with the outline color
+            // Inner content framed strictly inside the border with 3px control-panel bezel
             .child(
                 div()
-                    .size_full()
-                    .relative()
+                    .absolute()
+                    .inset(px(3.0))
                     .rounded(px(10.0))
                     .border_1()
                     .border_color(outline_color)
@@ -847,10 +846,12 @@ impl Render for MirrorView {
                             .child(if let Some(ref img_data) = self.current_image {
                                 gpui::img(img_data.clone())
                                     .size_full()
+                                    .rounded(px(9.0))
                                     .into_any_element()
                             } else {
                                 div()
                                     .size_full()
+                                    .rounded(px(9.0))
                                     .bg(rgb(0x000000))
                                     .flex()
                                     .flex_col()
