@@ -6,6 +6,7 @@ pub fn send_startup_notification() {
             .summary("aire is running in the system tray")
             .body("Click the aire tray icon to mirror a window or open Settings.")
             .appname("aire")
+            .icon("aire")
             .timeout(Timeout::Milliseconds(4000))
             .show();
     });

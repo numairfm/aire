@@ -1,0 +1,129 @@
+name: CI & Release Builds
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  linux-appimage:
+    name: Linux AppImage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang \
+            libpipewire-0.3-dev \
+            libxkbcommon-dev \
+            libvulkan-dev \
+            libasound2-dev \
+            libssl-dev \
+            pkg-config \
+            wget \
+            file
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Package AppImage
+        run: |
+          mkdir -p AppDir/usr/bin AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/512x512/apps
+          cp target/release/aire AppDir/usr/bin/
+          cp assets/aire.desktop AppDir/
+          cp assets/aire.desktop AppDir/usr/share/applications/
+          cp assets/aire.png AppDir/aire.png
+          cp assets/aire.png AppDir/usr/share/icons/hicolor/512x512/apps/
+          ln -sf usr/bin/aire AppDir/AppRun
+          chmod +x AppDir/AppRun
+
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage -O appimagetool
+          chmod +x appimagetool
+          ARCH=x86_64 ./appimagetool --appimage-extract-and-run AppDir aire-x86_64.AppImage
+
+      - name: Upload Linux AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: aire-linux-x86_64-appimage
+          path: aire-x86_64.AppImage
+
+  macos-dmg:
+    name: macOS DMG
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Package macOS App and DMG
+        run: |
+          mkdir -p "aire.app/Contents/MacOS" "aire.app/Contents/Resources"
+          cp target/release/aire "aire.app/Contents/MacOS/"
+          cp assets/aire.png "aire.app/Contents/Resources/AppIcon.png"
+
+          cat << 'EOF' > aire.app/Contents/Info.plist
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key>
+              <string>aire</string>
+              <key>CFBundleIdentifier</key>
+              <string>io.github.numairfm.aire</string>
+              <key>CFBundleName</key>
+              <string>aire</string>
+              <key>CFBundleIconFile</key>
+              <string>AppIcon.png</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleShortVersionString</key>
+              <string>0.1.0</string>
+              <key>LSUIElement</key>
+              <true/>
+          </dict>
+          </plist>
+          EOF
+
+          hdiutil create -volname "aire" -srcfolder "aire.app" -ov -format UDZO "aire-macos.dmg"
+
+      - name: Upload macOS DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: aire-macos-dmg
+          path: aire-macos.dmg
+
+  windows-exe:
+    name: Windows EXE
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Upload Windows EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: aire-windows-exe
+          path: target/release/aire.exe

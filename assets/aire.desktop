@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=aire
+Comment=Lightweight, elegant floating window mirror
+Exec=aire
+Icon=aire
+Terminal=false
+Type=Application
+Categories=Utility;Graphics;Video;
+StartupWMClass=aire

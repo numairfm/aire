@@ -55,9 +55,38 @@ pub fn start_system_tray() -> Result<(TrayHandle, async_channel::Receiver<TrayCo
     }
 }
 
-/// Generates a crisp 32x32 custom Picture-in-Picture icon in ARGB32 (network byte order)
-/// and RGBA32 formats so the tray icon looks clean and native on all platforms without external asset files.
+/// Generates the system tray icon from the embedded application logo in ARGB32 (network byte order)
+/// and RGBA32 formats so the tray icon displays the authentic aire logo across all platforms.
 pub fn generate_tray_icon_argb32(size: u32) -> Vec<u8> {
+    if let Ok(dyn_img) = image::load_from_memory(include_bytes!("../../assets/aire.png")) {
+        let resized = dyn_img.resize_exact(size, size, image::imageops::FilterType::Lanczos3);
+        let rgba = resized.to_rgba8().into_raw();
+        let mut argb = Vec::with_capacity(rgba.len());
+        for px in rgba.chunks_exact(4) {
+            argb.extend_from_slice(&[px[3], px[0], px[1], px[2]]);
+        }
+        argb
+    } else {
+        generate_fallback_icon_argb32(size)
+    }
+}
+
+#[allow(dead_code)]
+pub fn generate_tray_icon_rgba32(size: u32) -> Vec<u8> {
+    if let Ok(dyn_img) = image::load_from_memory(include_bytes!("../../assets/aire.png")) {
+        let resized = dyn_img.resize_exact(size, size, image::imageops::FilterType::Lanczos3);
+        resized.to_rgba8().into_raw()
+    } else {
+        let argb = generate_fallback_icon_argb32(size);
+        let mut rgba = Vec::with_capacity(argb.len());
+        for px in argb.chunks_exact(4) {
+            rgba.extend_from_slice(&[px[1], px[2], px[3], px[0]]);
+        }
+        rgba
+    }
+}
+
+fn generate_fallback_icon_argb32(size: u32) -> Vec<u8> {
     let mut data = Vec::with_capacity((size * size * 4) as usize);
     let s = size as f32;
     for y in 0..size {
@@ -88,14 +117,4 @@ pub fn generate_tray_icon_argb32(size: u32) -> Vec<u8> {
         }
     }
     data
-}
-
-#[allow(dead_code)]
-pub fn generate_tray_icon_rgba32(size: u32) -> Vec<u8> {
-    let argb = generate_tray_icon_argb32(size);
-    let mut rgba = Vec::with_capacity(argb.len());
-    for px in argb.chunks_exact(4) {
-        rgba.extend_from_slice(&[px[1], px[2], px[3], px[0]]);
-    }
-    rgba
 }

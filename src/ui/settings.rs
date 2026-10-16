@@ -1,6 +1,8 @@
+use std::sync::Arc;
+
 use gpui::{
     canvas, div, point, prelude::*, px, rgb, Context, Entity, FontWeight, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, PathBuilder, Render, Window,
+    MouseMoveEvent, MouseUpEvent, PathBuilder, Render, RenderImage, Window,
 };
 
 use crate::{
@@ -12,6 +14,7 @@ use crate::{
 pub struct SettingsView {
     app_state: Entity<AppState>,
     is_dragging_slider: bool,
+    logo: Option<Arc<RenderImage>>,
 }
 
 impl SettingsView {
@@ -29,9 +32,22 @@ impl SettingsView {
         })
         .detach();
 
+        let logo = image::load_from_memory(include_bytes!("../../assets/aire.png"))
+            .ok()
+            .and_then(|img| {
+                let rgba = img.resize_exact(48, 48, image::imageops::FilterType::Lanczos3).to_rgba8();
+                let mut bgra = rgba.into_raw();
+                for px in bgra.chunks_exact_mut(4) {
+                    px.swap(0, 2);
+                }
+                image::ImageBuffer::from_raw(48, 48, bgra)
+            })
+            .map(|buf| Arc::new(RenderImage::new(smallvec::smallvec![image::Frame::new(buf)])));
+
         Self {
             app_state,
             is_dragging_slider: false,
+            logo,
         }
     }
 
@@ -127,10 +143,23 @@ impl Render for SettingsView {
                     })
                     .child(
                         div()
-                            .text_sm()
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(rgb(0xffffff))
-                            .child("aire"),
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .when_some(self.logo.clone(), |el, logo| {
+                                el.child(
+                                    gpui::img(logo)
+                                        .size(px(18.0))
+                                        .rounded(px(4.0)),
+                                )
+                            })
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_color(rgb(0xffffff))
+                                    .child("aire"),
+                            ),
                     )
                     .child(
                         div()
