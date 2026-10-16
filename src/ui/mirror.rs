@@ -279,11 +279,11 @@ impl Render for MirrorView {
                 .items_center()
                 .justify_between()
                 .px_2()
-                // Light frosty pill glass style
+                // Light frosty pill glass / clay style
                 .bg(rgba(0xffffffea))
                 .rounded(px(18.0))
                 .border_4()
-                .border_color(rgba(0xffffffbb))
+                .border_color(rgba(0xffffffea))
                 .shadow_lg()
                 // Left side: Drag handle to move the pill
                 .child(
@@ -374,10 +374,10 @@ impl Render for MirrorView {
             return div()
                 .size_full()
                 .relative()
-                .bg(rgba(0xffffff33))
-                .rounded(px(10.0))
+                .bg(rgba(0xffffff40))
+                .rounded(px(14.0))
                 .border_4()
-                .border_color(rgba(0xffffff55))
+                .border_color(rgba(0xffffffea))
                 .shadow_xl()
                 .flex()
                 .flex_col()
@@ -431,10 +431,10 @@ impl Render for MirrorView {
             return div()
                 .size_full()
                 .relative()
-                .bg(rgba(0xffffff33))
-                .rounded(px(10.0))
+                .bg(rgba(0xffffff40))
+                .rounded(px(14.0))
                 .border_4()
-                .border_color(rgba(0xffffff55))
+                .border_color(rgba(0xffffffea))
                 .shadow_xl()
                 .flex()
                 .flex_col()
@@ -490,11 +490,11 @@ impl Render for MirrorView {
             .id("mirror-root")
             .size_full()
             .relative()
-            // Frosty light glass styling
+            // White frosty glass / ceramic clay border & glass HUD
             .bg(rgba(0xffffff28))
-            .rounded(px(10.0))
+            .rounded(px(14.0))
             .border_4()
-            .border_color(rgba(0xffffff50))
+            .border_color(rgba(0xffffffea))
             .shadow_xl()
             .overflow_hidden()
             // Click-drag anywhere on the mirror body to move the window freely
@@ -574,6 +574,15 @@ impl Render for MirrorView {
                             )
                             .into_any_element()
                     }),
+            )
+            // Frosty glass / clay inner inset depth highlight
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .rounded(px(10.0))
+                    .border_1()
+                    .border_color(rgba(0xffffff60))
             )
             // Native compositor resize handles on all borders and corners (tracks globally without boundary detachment)
             // Left edge
