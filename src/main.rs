@@ -84,7 +84,7 @@ fn main() -> Result<()> {
             app_id: Some(APP_ID.to_string()),
             window_decorations: Some(WindowDecorations::Client),
             window_background: WindowBackgroundAppearance::Transparent,
-            kind: WindowKind::Normal,
+            kind: WindowKind::PopUp,
             is_movable: true,
             is_resizable: true,
             window_min_size: Some(Size::new(px(min_bounds.0), px(min_bounds.1))),
