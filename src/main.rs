@@ -1,101 +1,82 @@
 mod capture;
+mod config;
+mod notify;
+mod state;
+mod tray;
 mod ui;
 mod window;
 
 use anyhow::Result;
-use gpui::{
-    px, App, AppContext, Bounds, Point, Size, WindowBackgroundAppearance, WindowBounds,
-    WindowDecorations, WindowKind, WindowOptions,
-};
+use gpui::{App, AppContext};
 use gpui_platform::application;
 
 use crate::{
-    capture::{create_capture_channel, start_window_capture},
-    ui::MirrorView,
+    config::AppConfig,
+    notify::send_startup_notification,
+    state::{AppState, APP_ID},
+    tray::{start_system_tray, TrayCommand},
     window::configure_platform_window,
 };
 
 fn main() -> Result<()> {
-    const APP_ID: &str = "aire";
+    // 1. Load persistent configuration
+    let config = AppConfig::load();
 
-    // 1. Configure platform window rules (KWin keep-above, noborder, skiptaskbar)
-    if let Err(err) = configure_platform_window(APP_ID) {
+    // 2. Configure platform window rules (Always-on-top, noborder, skiptaskbar)
+    if let Err(err) = configure_platform_window(APP_ID, config.always_on_top) {
         eprintln!("[WINDOW] Platform window setup warning: {:?}", err);
     }
 
-    // 2. Set up communication channel for capture events
-    let (event_tx, event_rx) = create_capture_channel();
-
-    // 3. Start window capture backend (user picks window in native KDE portal dialog)
-    // If user cancels the picker or closes it, exit cleanly without opening any window
-    let Some((capture, initial_dims)) = start_window_capture(event_tx)? else {
-        eprintln!("[AIRE] Window selection cancelled. Exiting.");
-        return Ok(());
+    // 3. Start cross-platform system tray icon & menu
+    let (tray_handle, tray_rx) = match start_system_tray() {
+        Ok((handle, rx)) => (Some(handle), Some(rx)),
+        Err(err) => {
+            eprintln!("[TRAY] System tray warning: {:?}", err);
+            (None, None)
+        }
     };
 
-    let (source_w, source_h) = initial_dims.unwrap_or((1920, 1080));
-    let aspect_ratio = if source_h > 0 {
-        source_w as f32 / source_h as f32
-    } else {
-        16.0 / 9.0
-    };
+    // 4. Send startup notification informing the user that aire is running in the tray
+    send_startup_notification();
+    eprintln!("[AIRE] Running in system tray. Use tray icon to mirror windows or open Settings.");
 
-    // Calculate initial mirror window size shaped to the source aspect ratio
-    // Target ~400px width for standard/wide windows, or ~280px for vertical/portrait windows
-    let win_width = if aspect_ratio < 0.85 {
-        px(280.0) // compact width for tall/vertical windows
-    } else if aspect_ratio > 2.2 {
-        px(480.0) // wider for ultrawide windows
-    } else {
-        px(400.0) // standard width
-    };
-    let win_height = px((f32::from(win_width) / aspect_ratio).round().max(100.0));
-
-    // 4. Run GPUI application now that window is selected
+    // 5. Run GPUI application loop as a pure tray daemon (zero initial windows open)
     application().run(move |cx: &mut App| {
-        let display_bounds = cx.displays().first().map(|d| d.bounds()).unwrap_or_else(|| {
-            Bounds {
-                origin: Point::new(px(0.0), px(0.0)),
-                size: Size::new(px(1920.0), px(1080.0)),
-            }
-        });
+        let app_state = cx.new(|_| AppState::new(config, tray_handle));
 
-        // Center on screen on app open as requested
-        let origin_x = display_bounds.origin.x + (display_bounds.size.width - win_width) / 2.0;
-        let origin_y = display_bounds.origin.y + (display_bounds.size.height - win_height) / 2.0;
-
-        let (min_bounds, max_bounds) = MirrorView::compute_min_max_bounds(
-            aspect_ratio,
-            f32::from(display_bounds.size.width),
-            f32::from(display_bounds.size.height),
-        );
-        crate::window::set_window_resize_constraint(
-            Some(aspect_ratio),
-            Some(min_bounds),
-            Some(max_bounds),
-        );
-
-        let options = WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(Bounds {
-                origin: Point::new(origin_x, origin_y),
-                size: Size::new(win_width, win_height),
-            })),
-            titlebar: None,
-            app_id: Some(APP_ID.to_string()),
-            window_decorations: Some(WindowDecorations::Client),
-            window_background: WindowBackgroundAppearance::Transparent,
-            kind: WindowKind::PopUp,
-            is_movable: true,
-            is_resizable: true,
-            window_min_size: Some(Size::new(px(min_bounds.0), px(min_bounds.1))),
-            ..Default::default()
-        };
-
-        cx.open_window(options, move |_, cx| {
-            cx.activate(false);
-            cx.new(|cx| MirrorView::new(cx, capture, event_rx, aspect_ratio, source_w, source_h))
-        })
-        .expect("Failed to open aire mirror window");
+        if let Some(rx) = tray_rx {
+            let state_for_loop = app_state.clone();
+            cx.spawn(async move |cx| {
+                while let Ok(cmd) = rx.recv().await {
+                    let state_entity = state_for_loop.clone();
+                    let _ = cx.update(|cx| match cmd {
+                        TrayCommand::SpawnMirror => {
+                            AppState::spawn_mirror(state_entity, cx);
+                        }
+                        TrayCommand::TogglePauseAll => {
+                            state_entity.update(cx, |state, cx| {
+                                state.toggle_pause_all(cx);
+                            });
+                        }
+                        TrayCommand::CloseAllMirrors => {
+                            state_entity.update(cx, |state, cx| {
+                                state.close_all_mirrors(cx);
+                            });
+                        }
+                        TrayCommand::OpenSettings => {
+                            AppState::open_settings(state_entity, cx);
+                        }
+                        TrayCommand::Quit => {
+                            state_entity.update(cx, |state, cx| {
+                                state.close_all_mirrors(cx);
+                            });
+                            cx.quit();
+                        }
+                    });
+                }
+            })
+            .detach();
+        }
     });
 
     Ok(())

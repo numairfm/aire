@@ -21,7 +21,10 @@ pub(crate) use text_system::*;
 #[cfg(feature = "wayland")]
 pub(crate) use wayland::*;
 #[cfg(feature = "wayland")]
-pub use wayland::set_wayland_resize_constraint;
+pub use wayland::{
+    remove_wayland_resize_constraint, set_wayland_resize_constraint,
+    set_wayland_resize_constraint_for,
+};
 #[cfg(feature = "x11")]
 pub(crate) use x11::*;
 

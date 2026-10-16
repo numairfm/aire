@@ -1,15 +1,18 @@
 use std::{
     os::fd::OwnedFd,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU32, Ordering},
         Arc,
     },
     thread,
+    time::Duration,
 };
 
 use anyhow::{Context, Result};
 use ashpd::{
-    desktop::screencast::{CursorMode, Screencast, SelectSourcesOptions, SourceType, StartCastOptions},
+    desktop::screencast::{
+        CursorMode, Screencast, SelectSourcesOptions, SourceType, StartCastOptions,
+    },
     enumflags2::BitFlags,
 };
 use image::{Frame, ImageBuffer};
@@ -20,29 +23,40 @@ use spa::pod::Pod;
 
 use super::{CaptureEvent, CaptureSender, CapturedFrame, WindowCapture};
 
-use std::time::Duration;
-
 pub struct LinuxWindowCapture {
     is_paused: Arc<AtomicBool>,
+    is_running: Arc<AtomicBool>,
+    target_fps: Arc<AtomicU32>,
 }
 
 impl LinuxWindowCapture {
     pub fn start(
         event_tx: CaptureSender,
+        initial_target_fps: u32,
     ) -> Result<Option<(Box<dyn WindowCapture>, Option<(u32, u32)>)>> {
         eprintln!("[PORTAL] Requesting window selection from XDG Desktop Portal...");
         let portal_res = async_io::block_on(async {
-            let proxy = Screencast::new().await.context("Failed to connect to ScreenCast portal")?;
-            let session = proxy.create_session(Default::default()).await.context("Failed to create screencast session")?;
+            let proxy = Screencast::new()
+                .await
+                .context("Failed to connect to ScreenCast portal")?;
+            let session = proxy
+                .create_session(Default::default())
+                .await
+                .context("Failed to create screencast session")?;
 
             let options = SelectSourcesOptions::default()
                 .set_cursor_mode(CursorMode::Metadata)
                 .set_sources(BitFlags::from_flag(SourceType::Window))
                 .set_multiple(false);
 
-            proxy.select_sources(&session, options).await.context("SelectSources failed")?;
+            proxy
+                .select_sources(&session, options)
+                .await
+                .context("SelectSources failed")?;
 
-            let request = proxy.start(&session, None, StartCastOptions::default()).await?;
+            let request = proxy
+                .start(&session, None, StartCastOptions::default())
+                .await?;
             let response = match request.response() {
                 Ok(resp) => resp,
                 Err(err) => {
@@ -60,7 +74,10 @@ impl LinuxWindowCapture {
                 }
             };
             let node_id = stream.pipe_wire_node_id();
-            let pw_fd = proxy.open_pipe_wire_remote(&session, Default::default()).await.ok();
+            let pw_fd = proxy
+                .open_pipe_wire_remote(&session, Default::default())
+                .await
+                .ok();
             Ok::<Option<(u32, Option<OwnedFd>)>, anyhow::Error>(Some((node_id, pw_fd)))
         });
 
@@ -76,8 +93,11 @@ impl LinuxWindowCapture {
         eprintln!("[PIPEWIRE] Selected window stream node ID: {}", node_id);
         let is_paused = Arc::new(AtomicBool::new(false));
         let is_running = Arc::new(AtomicBool::new(true));
+        let target_fps = Arc::new(AtomicU32::new(initial_target_fps.clamp(15, 120)));
 
         let is_paused_clone = is_paused.clone();
+        let is_running_clone = is_running.clone();
+        let target_fps_clone = target_fps.clone();
         let tx = event_tx.clone();
         let (dim_tx, dim_rx) = crossbeam_channel::bounded::<(u32, u32)>(1);
 
@@ -87,10 +107,14 @@ impl LinuxWindowCapture {
                 pw_fd,
                 tx.clone(),
                 is_paused_clone,
-                is_running,
+                is_running_clone,
+                target_fps_clone,
                 Some(dim_tx),
             ) {
-                let _ = tx.try_send(CaptureEvent::Error(format!("PipeWire stream error: {}", err)));
+                let _ = tx.try_send(CaptureEvent::Error(format!(
+                    "PipeWire stream error: {}",
+                    err
+                )));
             }
         });
 
@@ -106,7 +130,11 @@ impl LinuxWindowCapture {
         }
 
         Ok(Some((
-            Box::new(LinuxWindowCapture { is_paused }),
+            Box::new(LinuxWindowCapture {
+                is_paused,
+                is_running,
+                target_fps,
+            }),
             initial_dims,
         )))
     }
@@ -120,14 +148,30 @@ impl WindowCapture for LinuxWindowCapture {
     fn resume(&self) {
         self.is_paused.store(false, Ordering::Relaxed);
     }
+
+    fn stop(&self) {
+        self.is_running.store(false, Ordering::Relaxed);
+    }
+
+    fn set_target_fps(&self, fps: u32) {
+        self.target_fps.store(fps.clamp(15, 120), Ordering::Relaxed);
+    }
+}
+
+impl Drop for LinuxWindowCapture {
+    fn drop(&mut self) {
+        self.is_running.store(false, Ordering::Relaxed);
+    }
 }
 
 struct StreamContext {
+    mainloop: pw::main_loop::MainLoopWeak,
     format: spa::param::video::VideoInfoRaw,
     event_tx: CaptureSender,
     initial_dim_tx: Option<crossbeam_channel::Sender<(u32, u32)>>,
     is_paused: Arc<AtomicBool>,
     is_running: Arc<AtomicBool>,
+    target_fps: Arc<AtomicU32>,
     last_width: u32,
     last_height: u32,
     last_frame_sent: std::time::Instant,
@@ -139,6 +183,7 @@ fn run_pipewire_loop(
     event_tx: CaptureSender,
     is_paused: Arc<AtomicBool>,
     is_running: Arc<AtomicBool>,
+    target_fps: Arc<AtomicU32>,
     initial_dim_tx: Option<crossbeam_channel::Sender<(u32, u32)>>,
 ) -> Result<()> {
     pw::init();
@@ -152,12 +197,29 @@ fn run_pipewire_loop(
         context.connect_rc(None)?
     };
 
+    // Periodic timer so mainloop exits promptly even when source window is static
+    let mainloop_weak = mainloop.downgrade();
+    let is_running_timer = is_running.clone();
+    let _quit_timer = mainloop.loop_().add_timer(move |_| {
+        if !is_running_timer.load(Ordering::Relaxed) {
+            if let Some(ml) = mainloop_weak.upgrade() {
+                ml.quit();
+            }
+        }
+    });
+    let _ = _quit_timer.update_timer(
+        Some(Duration::from_millis(200)),
+        Some(Duration::from_millis(200)),
+    );
+
     let stream_ctx = StreamContext {
+        mainloop: mainloop.downgrade(),
         format: Default::default(),
         event_tx: event_tx.clone(),
         initial_dim_tx,
         is_paused,
         is_running: is_running.clone(),
+        target_fps,
         last_width: 0,
         last_height: 0,
         last_frame_sent: std::time::Instant::now() - Duration::from_secs(1),
@@ -177,8 +239,14 @@ fn run_pipewire_loop(
         .add_local_listener_with_user_data(stream_ctx)
         .state_changed(|_, ctx, old, new| {
             eprintln!("[PIPEWIRE] State changed: {:?} -> {:?}", old, new);
-            if matches!(new, pw::stream::StreamState::Unconnected | pw::stream::StreamState::Error(_)) {
+            if matches!(
+                new,
+                pw::stream::StreamState::Unconnected | pw::stream::StreamState::Error(_)
+            ) {
                 let _ = ctx.event_tx.try_send(CaptureEvent::SourceClosed);
+                if let Some(ml) = ctx.mainloop.upgrade() {
+                    ml.quit();
+                }
             }
         })
         .param_changed(|_, ctx, id, param| {
@@ -187,10 +255,11 @@ fn run_pipewire_loop(
                 return;
             }
 
-            let (media_type, media_subtype) = match pw::spa::param::format_utils::parse_format(param) {
-                Ok(v) => v,
-                Err(_) => return,
-            };
+            let (media_type, media_subtype) =
+                match pw::spa::param::format_utils::parse_format(param) {
+                    Ok(v) => v,
+                    Err(_) => return,
+                };
 
             if media_type != pw::spa::param::format::MediaType::Video
                 || media_subtype != pw::spa::param::format::MediaSubtype::Raw
@@ -219,7 +288,14 @@ fn run_pipewire_loop(
                 return;
             };
 
-            if !ctx.is_running.load(Ordering::Relaxed) || ctx.is_paused.load(Ordering::Relaxed) {
+            if !ctx.is_running.load(Ordering::Relaxed) {
+                if let Some(ml) = ctx.mainloop.upgrade() {
+                    ml.quit();
+                }
+                return;
+            }
+
+            if ctx.is_paused.load(Ordering::Relaxed) {
                 return;
             }
 
@@ -228,9 +304,10 @@ fn run_pipewire_loop(
                 return;
             }
 
-            // Cap capture processing to ~60 FPS (16ms interval) to prevent GPU/CPU thrashing on high-refresh monitors
+            let fps = ctx.target_fps.load(Ordering::Relaxed).max(15);
+            let min_interval = Duration::from_micros((1_000_000 / (fps as u64)).saturating_sub(500));
             let now = std::time::Instant::now();
-            if now.duration_since(ctx.last_frame_sent) < Duration::from_millis(16) {
+            if now.duration_since(ctx.last_frame_sent) < min_interval {
                 return;
             }
 
@@ -253,7 +330,11 @@ fn run_pipewire_loop(
             };
 
             let row_bytes = (width as usize) * 4;
-            let src_stride = if stride >= row_bytes { stride } else { row_bytes };
+            let src_stride = if stride >= row_bytes {
+                stride
+            } else {
+                row_bytes
+            };
             let needed_src_bytes = if height > 1 {
                 src_stride * ((height as usize) - 1) + row_bytes
             } else {
@@ -276,7 +357,6 @@ fn run_pipewire_loop(
             );
 
             if !is_rgba_order && src_stride == row_bytes {
-                // Fast contiguous copy for BGRx/BGRA
                 bgra_buf.copy_from_slice(&raw_bytes[..needed_dst_bytes]);
                 for pixel in bgra_buf.chunks_exact_mut(4) {
                     pixel[3] = 255;
@@ -286,7 +366,9 @@ fn run_pipewire_loop(
                     let src_row = &raw_bytes[y * src_stride..y * src_stride + row_bytes];
                     let dst_row = &mut bgra_buf[y * row_bytes..(y + 1) * row_bytes];
                     if is_rgba_order {
-                        for (dst, src) in dst_row.chunks_exact_mut(4).zip(src_row.chunks_exact(4)) {
+                        for (dst, src) in
+                            dst_row.chunks_exact_mut(4).zip(src_row.chunks_exact(4))
+                        {
                             dst[0] = src[2]; // B
                             dst[1] = src[1]; // G
                             dst[2] = src[0]; // R
@@ -302,7 +384,8 @@ fn run_pipewire_loop(
             }
 
             if let Some(img_buffer) = ImageBuffer::from_raw(width, height, bgra_buf) {
-                let render_image = Arc::new(gpui::RenderImage::new(smallvec![Frame::new(img_buffer)]));
+                let render_image =
+                    Arc::new(gpui::RenderImage::new(smallvec![Frame::new(img_buffer)]));
                 if ctx
                     .event_tx
                     .try_send(CaptureEvent::Frame(CapturedFrame {
@@ -347,9 +430,18 @@ fn run_pipewire_loop(
             Choice,
             Range,
             Rectangle,
-            pw::spa::utils::Rectangle { width: 1920, height: 1080 },
-            pw::spa::utils::Rectangle { width: 1, height: 1 },
-            pw::spa::utils::Rectangle { width: 4096, height: 4096 }
+            pw::spa::utils::Rectangle {
+                width: 1920,
+                height: 1080
+            },
+            pw::spa::utils::Rectangle {
+                width: 1,
+                height: 1
+            },
+            pw::spa::utils::Rectangle {
+                width: 4096,
+                height: 4096
+            }
         ),
         pw::spa::pod::property!(
             pw::spa::param::format::FormatProperties::VideoFramerate,
@@ -357,7 +449,7 @@ fn run_pipewire_loop(
             Range,
             Fraction,
             pw::spa::utils::Fraction { num: 60, denom: 1 },
-            pw::spa::utils::Fraction { num: 0, denom: 1 },
+            pw::spa::utils::Fraction { num: 1, denom: 1 },
             pw::spa::utils::Fraction { num: 60, denom: 1 }
         ),
     );
@@ -369,10 +461,10 @@ fn run_pipewire_loop(
     .0
     .into_inner();
 
-    let mut params = [Pod::from_bytes(&values).context("Failed to parse Pod params")?];
+    let mut params = [Pod::from_bytes(&values).context("Failed to create SPA Pod")?];
 
     stream.connect(
-        spa::utils::Direction::Input,
+        pw::spa::utils::Direction::Input,
         Some(node_id),
         pw::stream::StreamFlags::AUTOCONNECT | pw::stream::StreamFlags::MAP_BUFFERS,
         &mut params,

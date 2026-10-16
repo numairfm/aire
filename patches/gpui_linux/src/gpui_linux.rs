@@ -3,4 +3,7 @@ mod linux;
 
 pub use linux::current_platform;
 #[cfg(feature = "wayland")]
-pub use linux::set_wayland_resize_constraint;
+pub use linux::{
+    remove_wayland_resize_constraint, set_wayland_resize_constraint,
+    set_wayland_resize_constraint_for,
+};

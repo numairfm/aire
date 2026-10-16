@@ -27,21 +27,33 @@ pub fn create_capture_channel() -> (CaptureSender, CaptureReceiver) {
 pub trait WindowCapture: Send + Sync {
     fn pause(&self);
     fn resume(&self);
+    fn stop(&self);
+    fn set_target_fps(&self, fps: u32);
 }
 
 #[cfg(target_os = "linux")]
 pub mod linux;
+#[cfg(target_os = "macos")]
+pub mod macos;
+#[cfg(target_os = "windows")]
+pub mod windows;
 
 pub fn start_window_capture(
     event_tx: CaptureSender,
+    initial_target_fps: u32,
 ) -> Result<Option<(Box<dyn WindowCapture>, Option<(u32, u32)>)>> {
     #[cfg(target_os = "linux")]
     {
-        linux::LinuxWindowCapture::start(event_tx)
+        linux::LinuxWindowCapture::start(event_tx, initial_target_fps)
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
     {
-        anyhow::bail!("Window capture is currently only implemented for Linux");
+        macos::MacosWindowCapture::start(event_tx, initial_target_fps)
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        windows::WindowsWindowCapture::start(event_tx, initial_target_fps)
     }
 }

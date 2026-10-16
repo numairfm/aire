@@ -9,7 +9,10 @@ mod window;
 pub mod layer_shell;
 
 pub(crate) use client::*;
-pub use window::set_wayland_resize_constraint;
+pub use window::{
+    remove_wayland_resize_constraint, set_wayland_resize_constraint,
+    set_wayland_resize_constraint_for,
+};
 
 use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::Shape;
 

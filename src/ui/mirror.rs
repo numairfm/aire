@@ -4,16 +4,20 @@ use std::{
 };
 
 use gpui::{
-    div, prelude::*, px, rgb, rgba, size, Context, FontWeight, Render, RenderImage, ResizeEdge,
-    ScrollWheelEvent, WeakEntity, Window,
+    div, prelude::*, px, rgb, rgba, size, Context, Entity, FontWeight, Render, RenderImage,
+    ResizeEdge, ScrollWheelEvent, Task, WeakEntity, Window,
 };
 
 use crate::{
-    capture::{CaptureEvent, CaptureReceiver, WindowCapture},
-    window::set_window_resize_constraint,
+    capture::{
+        create_capture_channel, start_window_capture, CaptureEvent, CaptureReceiver, WindowCapture,
+    },
+    state::AppState,
+    window::{remove_window_resize_constraint, set_window_resize_constraint_for},
 };
 
 pub struct MirrorView {
+    app_state: Entity<AppState>,
     capture: Box<dyn WindowCapture>,
     current_image: Option<Arc<RenderImage>>,
     retired_images: Vec<Arc<RenderImage>>,
@@ -22,22 +26,32 @@ pub struct MirrorView {
     aspect_ratio: f32,
     fps: f64,
     is_minimized: bool,
+    is_paused_by_user: bool,
+    is_switching_source: bool,
     source_closed: bool,
     error_message: Option<String>,
     last_window_width: f32,
     last_window_height: f32,
     needs_aspect_adaptation: bool,
+    was_hovered: bool,
+    hover_transition_start: Option<Instant>,
+    hover_transition_from: f32,
+    current_hover_t: f32,
+    _receiver_task: Task<()>,
 }
 
 impl MirrorView {
-    pub fn compute_min_max_bounds(aspect_ratio: f32, disp_w: f32, disp_h: f32) -> ((f32, f32), (f32, f32)) {
+    pub fn compute_min_max_bounds(
+        aspect_ratio: f32,
+        disp_w: f32,
+        disp_h: f32,
+    ) -> ((f32, f32), (f32, f32)) {
         let aspect = if aspect_ratio > 0.05 {
             aspect_ratio
         } else {
             16.0 / 9.0
         };
 
-        // Minimum size (at least 240px wide for landscape, or 240px tall for portrait)
         let (min_w, min_h) = if aspect >= 1.0 {
             let w = 240.0f32;
             let h = (w / aspect).round().max(135.0);
@@ -50,7 +64,6 @@ impl MirrorView {
             (w, h)
         };
 
-        // Maximum size (at most 75% of screen size, capped at 1440x850)
         let max_bound_w = (disp_w * 0.75).min(1440.0);
         let max_bound_h = (disp_h * 0.75).min(850.0);
         let (max_w, max_h) = if aspect >= 1.0 {
@@ -80,42 +93,74 @@ impl MirrorView {
 
     pub fn new(
         cx: &mut Context<Self>,
+        app_state: Entity<AppState>,
         capture: Box<dyn WindowCapture>,
         event_rx: CaptureReceiver,
         initial_aspect_ratio: f32,
         initial_width: u32,
         initial_height: u32,
     ) -> Self {
-        let (min_bounds, max_bounds) =
-            Self::compute_min_max_bounds(initial_aspect_ratio, 1920.0, 1080.0);
-        set_window_resize_constraint(Some(initial_aspect_ratio), Some(min_bounds), Some(max_bounds));
+        cx.observe(&app_state, |_, _, cx| {
+            cx.notify();
+        })
+        .detach();
 
-        // Spawn background listener for capture events (100% non-blocking)
+        let receiver_task = Self::spawn_receiver_task(cx, event_rx);
+
+        Self {
+            app_state,
+            capture,
+            current_image: None,
+            retired_images: Vec::with_capacity(4),
+            source_width: initial_width,
+            source_height: initial_height,
+            aspect_ratio: initial_aspect_ratio,
+            fps: 0.0,
+            is_minimized: false,
+            is_paused_by_user: false,
+            is_switching_source: false,
+            source_closed: false,
+            error_message: None,
+            last_window_width: 0.0,
+            last_window_height: 0.0,
+            needs_aspect_adaptation: false,
+            was_hovered: false,
+            hover_transition_start: None,
+            hover_transition_from: 0.0,
+            current_hover_t: 0.0,
+            _receiver_task: receiver_task,
+        }
+    }
+
+    fn spawn_receiver_task(cx: &mut Context<Self>, event_rx: CaptureReceiver) -> Task<()> {
         cx.spawn(async move |this: WeakEntity<Self>, cx| {
             let mut frames_this_sec = 0;
             let mut last_fps_time = Instant::now();
             let last_frame_instant = Arc::new(parking_lot::Mutex::new(Instant::now()));
 
-            // Periodic timer task to reset FPS to 0.0 when source is static
             let this_fps_watcher = this.clone();
             let last_frame_instant_checker = last_frame_instant.clone();
             let _fps_checker = cx.spawn(async move |cx| {
                 loop {
-                    cx.background_executor().timer(Duration::from_millis(500)).await;
+                    cx.background_executor()
+                        .timer(Duration::from_millis(500))
+                        .await;
                     let last_seen = *last_frame_instant_checker.lock();
-                    let _ = this_fps_watcher.update(cx, |view, cx| {
+                    let ok = this_fps_watcher.update(cx, |view, cx| {
                         if view.fps > 0.0 && last_seen.elapsed() > Duration::from_millis(1500) {
                             view.fps = 0.0;
                             cx.notify();
                         }
                     });
+                    if ok.is_err() {
+                        break;
+                    }
                 }
             });
 
             while let Ok(event) = event_rx.recv().await {
                 match event {
                     CaptureEvent::Frame(mut frame) => {
-                        // Drain any backlog of frames to always render the freshest frame with zero latency
                         while let Ok(next_event) = event_rx.try_recv() {
                             match next_event {
                                 CaptureEvent::Frame(f) => frame = f,
@@ -219,34 +264,121 @@ impl MirrorView {
                 }
             }
         })
-        .detach();
+    }
 
-        Self {
-            capture,
-            current_image: None,
-            retired_images: Vec::with_capacity(4),
-            source_width: initial_width,
-            source_height: initial_height,
-            aspect_ratio: initial_aspect_ratio,
-            fps: 0.0,
-            is_minimized: false,
-            source_closed: false,
-            error_message: None,
-            last_window_width: 0.0,
-            last_window_height: 0.0,
-            needs_aspect_adaptation: false,
+    pub fn set_target_fps(&mut self, fps: u32) {
+        self.capture.set_target_fps(fps);
+    }
+
+    pub fn is_stream_paused(&self) -> bool {
+        self.is_paused_by_user || self.is_minimized
+    }
+
+    pub fn set_stream_paused(&mut self, paused: bool, cx: &mut Context<Self>) {
+        self.is_paused_by_user = paused;
+        if paused {
+            self.capture.pause();
+            self.fps = 0.0;
+        } else if !self.is_minimized {
+            self.capture.resume();
         }
+        cx.notify();
+    }
+
+    pub fn cleanup_before_close(&mut self, window: Option<&mut Window>, cx: &mut Context<Self>) {
+        self.capture.stop();
+        if let Some(old_img) = self.current_image.take() {
+            self.retired_images.push(old_img);
+        }
+        if let Some(win) = window {
+            let win_id = win.window_handle().window_id().as_u64();
+            remove_window_resize_constraint(win_id);
+            for img in self.retired_images.drain(..) {
+                cx.drop_image(img, Some(win));
+            }
+        } else {
+            for img in self.retired_images.drain(..) {
+                cx.drop_image(img, None);
+            }
+        }
+    }
+
+    fn close_this_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.cleanup_before_close(Some(window), cx);
+        let app_state = self.app_state.clone();
+        window.remove_window();
+        app_state.update(cx, |state, cx| {
+            state.prune_closed_mirrors();
+            cx.notify();
+        });
+    }
+
+    fn trigger_switch_source(&mut self, cx: &mut Context<Self>) {
+        if self.is_switching_source {
+            return;
+        }
+        self.is_switching_source = true;
+        let target_fps = self.app_state.read(cx).config.target_fps;
+        cx.notify();
+
+        cx.spawn(async move |this: WeakEntity<Self>, cx| {
+            let (event_tx, event_rx) = create_capture_channel();
+            let (res_tx, res_rx) = async_channel::bounded(1);
+
+            std::thread::spawn(move || {
+                let res = start_window_capture(event_tx, target_fps);
+                let _ = res_tx.send_blocking(res);
+            });
+
+            let capture_res = res_rx.recv().await;
+
+            let _ = this.update(cx, |view, cx| {
+                view.is_switching_source = false;
+                if let Ok(Ok(Some((new_capture, initial_dims)))) = capture_res {
+                    view.capture.stop();
+                    if let Some(old_img) = view.current_image.take() {
+                        cx.drop_image(old_img.clone(), None);
+                        view.retired_images.push(old_img);
+                    }
+                    view.capture = new_capture;
+                    view.source_closed = false;
+                    view.error_message = None;
+                    view.is_paused_by_user = false;
+                    if let Some((w, h)) = initial_dims {
+                        view.source_width = w;
+                        view.source_height = h;
+                        if h > 0 {
+                            view.aspect_ratio = w as f32 / h as f32;
+                            view.needs_aspect_adaptation = true;
+                        }
+                    }
+                    view._receiver_task = Self::spawn_receiver_task(cx, event_rx);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+}
+
+impl Drop for MirrorView {
+    fn drop(&mut self) {
+        self.capture.stop();
     }
 }
 
 impl Render for MirrorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let win_id = window.window_handle().window_id().as_u64();
+
         // Evict all retired frame textures from this window's WGPU sprite atlas before painting
         for old_img in self.retired_images.drain(..) {
             cx.drop_image(old_img, Some(window));
         }
 
-        // 1. Sync Wayland protocol-level aspect ratio & boundary constraints
+        let config = self.app_state.read(cx).config.clone();
+
+        // 1. Sync Wayland protocol-level aspect ratio & boundary constraints for THIS window
         if !self.is_minimized {
             let bounds = window.bounds();
             let raw_w = f32::from(bounds.size.width);
@@ -271,7 +403,12 @@ impl Render for MirrorView {
             let ((min_w, min_h), (max_w, max_h)) =
                 Self::compute_min_max_bounds(aspect, disp_w, disp_h);
 
-            set_window_resize_constraint(Some(aspect), Some((min_w, min_h)), Some((max_w, max_h)));
+            set_window_resize_constraint_for(
+                Some(win_id),
+                Some(aspect),
+                Some((min_w, min_h)),
+                Some((max_w, max_h)),
+            );
 
             if self.needs_aspect_adaptation {
                 self.needs_aspect_adaptation = false;
@@ -289,7 +426,7 @@ impl Render for MirrorView {
             }
         }
 
-        // 1. Minimized Pill State
+        // 2. Minimized Pill State
         if self.is_minimized {
             return div()
                 .size_full()
@@ -297,13 +434,11 @@ impl Render for MirrorView {
                 .items_center()
                 .justify_between()
                 .px_2()
-                // Light frosty pill glass / clay style
                 .bg(rgba(0xffffffea))
                 .rounded(px(18.0))
                 .border_4()
                 .border_color(rgba(0xffffffea))
                 .shadow_lg()
-                // Left side: Drag handle to move the pill
                 .child(
                     div()
                         .flex()
@@ -318,7 +453,7 @@ impl Render for MirrorView {
                             div()
                                 .size(px(8.0))
                                 .rounded(px(4.0))
-                                .bg(rgb(0x10b981)), // gentle emerald green pulse
+                                .bg(rgb(0x10b981)),
                         )
                         .child(
                             div()
@@ -334,7 +469,6 @@ impl Render for MirrorView {
                                 .child("⋮"),
                         ),
                 )
-                // Right side: Click to restore
                 .child(
                     div()
                         .id("restore-pill-action")
@@ -345,9 +479,11 @@ impl Render for MirrorView {
                         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                             cx.stop_propagation();
                         })
-                        .on_click(cx.listener(|this, _, window, cx| {
+                        .on_click(cx.listener(move |this, _, window, cx| {
                             this.is_minimized = false;
-                            this.capture.resume();
+                            if !this.is_paused_by_user {
+                                this.capture.resume();
+                            }
                             let (disp_w, disp_h) = window
                                 .display(cx)
                                 .map(|d| {
@@ -364,7 +500,8 @@ impl Render for MirrorView {
                             };
                             let (min_bounds, max_bounds) =
                                 Self::compute_min_max_bounds(aspect, disp_w, disp_h);
-                            set_window_resize_constraint(
+                            set_window_resize_constraint_for(
+                                Some(win_id),
                                 Some(aspect),
                                 Some(min_bounds),
                                 Some(max_bounds),
@@ -387,7 +524,7 @@ impl Render for MirrorView {
                 .into_any_element();
         }
 
-        // 2. Source Window Closed State
+        // 3. Source Window Closed State
         if self.source_closed {
             return div()
                 .size_full()
@@ -417,34 +554,59 @@ impl Render for MirrorView {
                     div()
                         .text_xs()
                         .text_color(rgb(0x4b5563))
-                        .child("The mirrored window was closed by the user."),
+                        .child("The mirrored window was closed."),
                 )
                 .child(
                     div()
-                        .id("btn-exit-closed")
+                        .flex()
+                        .items_center()
+                        .gap_2()
                         .mt_2()
-                        .px_3()
-                        .py_1()
-                        .rounded(px(6.0))
-                        .bg(rgba(0xffffffea))
-                        .border_1()
-                        .border_color(rgba(0x00000015))
-                        .text_xs()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(rgb(0x111827))
-                        .cursor_pointer()
-                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
-                            cx.stop_propagation();
-                        })
-                        .on_click(|_, _, cx| {
-                            cx.quit();
-                        })
-                        .child("Close aire"),
+                        .child(
+                            div()
+                                .id("btn-switch-closed")
+                                .px_3()
+                                .py_1()
+                                .rounded(px(6.0))
+                                .bg(rgb(0x10b981))
+                                .text_xs()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(rgb(0xffffff))
+                                .cursor_pointer()
+                                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                                    cx.stop_propagation();
+                                })
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.trigger_switch_source(cx);
+                                }))
+                                .child("Pick Another Window"),
+                        )
+                        .child(
+                            div()
+                                .id("btn-exit-closed")
+                                .px_3()
+                                .py_1()
+                                .rounded(px(6.0))
+                                .bg(rgba(0xffffffea))
+                                .border_1()
+                                .border_color(rgba(0x00000015))
+                                .text_xs()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(rgb(0x111827))
+                                .cursor_pointer()
+                                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                                    cx.stop_propagation();
+                                })
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.close_this_window(window, cx);
+                                }))
+                                .child("Close Mirror"),
+                        ),
                 )
                 .into_any_element();
         }
 
-        // 3. Error State (if picker was cancelled or failed)
+        // 4. Error State
         if let Some(ref err) = self.error_message {
             return div()
                 .size_full()
@@ -493,33 +655,65 @@ impl Render for MirrorView {
                         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                             cx.stop_propagation();
                         })
-                        .on_click(|_, _, cx| {
-                            cx.quit();
-                        })
-                        .child("Exit"),
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.close_this_window(window, cx);
+                        }))
+                        .child("Close Mirror"),
                 )
                 .into_any_element();
         }
 
-        // 4. Normal Active Mirror HUD
+        // 5. Smooth Hover Animation Calculation
         let is_hovered = window.is_window_hovered();
+        let target_t = if is_hovered { 1.0f32 } else { 0.0f32 };
+        let anim_ms = config.animation_speed.duration_ms();
+
+        if is_hovered != self.was_hovered {
+            self.was_hovered = is_hovered;
+            if anim_ms == 0 {
+                self.current_hover_t = target_t;
+                self.hover_transition_start = None;
+            } else {
+                self.hover_transition_from = self.current_hover_t;
+                self.hover_transition_start = Some(Instant::now());
+            }
+        }
+
+        if let Some(start) = self.hover_transition_start {
+            let elapsed_ms = start.elapsed().as_secs_f32() * 1000.0;
+            let duration_f32 = (anim_ms as f32).max(1.0);
+            let progress = (elapsed_ms / duration_f32).clamp(0.0, 1.0);
+            // Smooth cubic ease-out
+            let eased = 1.0 - (1.0 - progress).powi(3);
+            self.current_hover_t =
+                self.hover_transition_from + (target_t - self.hover_transition_from) * eased;
+            if progress < 1.0 {
+                window.request_animation_frame();
+            } else {
+                self.current_hover_t = target_t;
+                self.hover_transition_start = None;
+            }
+        } else {
+            self.current_hover_t = target_t;
+        }
+
+        let stream_opacity =
+            1.0 - self.current_hover_t * (1.0 - config.hover_opacity.clamp(0.05, 1.0));
+        let hud_opacity = self.current_hover_t;
 
         div()
             .id("mirror-root")
             .size_full()
             .relative()
-            // White frosty glass / ceramic clay border
             .bg(rgba(0xffffff28))
             .rounded(px(14.0))
             .border_4()
             .border_color(rgba(0xffffffea))
             .shadow_xl()
             .overflow_hidden()
-            // Click-drag anywhere on the mirror body to move the window freely
             .on_mouse_down(gpui::MouseButton::Left, |_, window, _| {
                 window.start_window_move();
             })
-            // Mouse scroll wheel scaling (strictly locked to aspect ratio)
             .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, window, cx| {
                 if this.is_minimized {
                     return;
@@ -566,11 +760,11 @@ impl Render for MirrorView {
                     window.resize(size(px(target_w), px(target_h)));
                 }
             }))
-            // Video / Mirror Content Layer (fades to 35% translucent on hover)
+            // Video / Mirror Content Layer
             .child(
                 div()
                     .size_full()
-                    .opacity(if is_hovered { 0.35 } else { 1.0 })
+                    .opacity(stream_opacity)
                     .child(if let Some(ref img_data) = self.current_image {
                         gpui::img(img_data.clone())
                             .size_full()
@@ -593,8 +787,7 @@ impl Render for MirrorView {
                             .into_any_element()
                     }),
             )
-            // Native compositor resize handles on all borders and corners (tracks globally without boundary detachment)
-            // Left edge
+            // Native compositor resize handles on all borders and corners
             .child(
                 div()
                     .id("resize-handle-left")
@@ -609,7 +802,6 @@ impl Render for MirrorView {
                         window.start_window_resize(ResizeEdge::Left);
                     }),
             )
-            // Right edge
             .child(
                 div()
                     .id("resize-handle-right")
@@ -624,7 +816,6 @@ impl Render for MirrorView {
                         window.start_window_resize(ResizeEdge::Right);
                     }),
             )
-            // Top edge
             .child(
                 div()
                     .id("resize-handle-top")
@@ -639,7 +830,6 @@ impl Render for MirrorView {
                         window.start_window_resize(ResizeEdge::Top);
                     }),
             )
-            // Bottom edge
             .child(
                 div()
                     .id("resize-handle-bottom")
@@ -654,7 +844,6 @@ impl Render for MirrorView {
                         window.start_window_resize(ResizeEdge::Bottom);
                     }),
             )
-            // Top-left corner
             .child(
                 div()
                     .id("resize-handle-top-left")
@@ -668,7 +857,6 @@ impl Render for MirrorView {
                         window.start_window_resize(ResizeEdge::TopLeft);
                     }),
             )
-            // Top-right corner
             .child(
                 div()
                     .id("resize-handle-top-right")
@@ -682,7 +870,6 @@ impl Render for MirrorView {
                         window.start_window_resize(ResizeEdge::TopRight);
                     }),
             )
-            // Bottom-left corner
             .child(
                 div()
                     .id("resize-handle-bottom-left")
@@ -696,7 +883,6 @@ impl Render for MirrorView {
                         window.start_window_resize(ResizeEdge::BottomLeft);
                     }),
             )
-            // Bottom-right corner (prominent tactile grip on hover)
             .child(
                 div()
                     .id("resize-handle-bottom-right")
@@ -716,7 +902,7 @@ impl Render for MirrorView {
                     .child(
                         div()
                             .size(px(10.0))
-                            .opacity(if is_hovered { 0.75 } else { 0.0 })
+                            .opacity(hud_opacity * 0.75)
                             .flex()
                             .flex_col()
                             .items_end()
@@ -736,25 +922,30 @@ impl Render for MirrorView {
                             ),
                     ),
             )
-            // Subtle stream metadata badge (Bottom-left)
-            .child(
-                div()
-                    .absolute()
-                    .bottom_2()
-                    .left_2()
-                    .px_2()
-                    .py_1()
-                    .rounded(px(6.0))
-                    .bg(rgba(0x00000088))
-                    .text_xs()
-                    .text_color(rgb(0xf3f4f6))
-                    .opacity(if is_hovered { 0.95 } else { 0.5 })
-                    .child(format!(
-                        "{}×{} • {:.0} fps",
-                        self.source_width, self.source_height, self.fps
-                    )),
-            )
-            // Frosty Glass Controls Overlay (Placed ON TOP of resize handles and video)
+            // Optional Debug FPS & Resolution Badge (controlled by Debug Options in Settings)
+            .when(config.show_fps_badge, |el| {
+                el.child(
+                    div()
+                        .absolute()
+                        .bottom_2()
+                        .left_2()
+                        .px_2()
+                        .py_1()
+                        .rounded(px(6.0))
+                        .bg(rgba(0x00000088))
+                        .text_xs()
+                        .text_color(rgb(0xf3f4f6))
+                        .opacity(if is_hovered { 0.95 } else { 0.55 })
+                        .child(format!(
+                            "{}×{} • {:.0} fps{}",
+                            self.source_width,
+                            self.source_height,
+                            self.fps,
+                            if self.is_paused_by_user { " (paused)" } else { "" }
+                        )),
+                )
+            })
+            // Frosty Glass Controls Overlay (Top-Right: Switch Source, Pause/Resume, Minimize, Close)
             .child(
                 div()
                     .absolute()
@@ -763,8 +954,37 @@ impl Render for MirrorView {
                     .flex()
                     .items_center()
                     .gap_1p5()
-                    .opacity(if is_hovered { 1.0 } else { 0.0 })
-                    // Minimize button
+                    .opacity(hud_opacity)
+                    // Switch Source button (`⇄`)
+                    .child(
+                        div()
+                            .id("btn-switch-source")
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .size(px(26.0))
+                            .rounded(px(13.0))
+                            .bg(rgba(0xffffffea))
+                            .border_1()
+                            .border_color(rgba(0x00000018))
+                            .shadow_sm()
+                            .cursor_pointer()
+                            .hover(|s| s.bg(rgba(0xffffffff)).shadow_md())
+                            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                                cx.stop_propagation();
+                            })
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.trigger_switch_source(cx);
+                            }))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_color(rgb(0x374151))
+                                    .child("⇄"),
+                            ),
+                    )
+                    // Minimize to pill button (`—`)
                     .child(
                         div()
                             .id("btn-minimize")
@@ -779,14 +999,14 @@ impl Render for MirrorView {
                             .shadow_sm()
                             .cursor_pointer()
                             .hover(|s| s.bg(rgba(0xffffffff)).shadow_md())
-                            // Stop propagation so parent's start_window_move() doesn't intercept the click
                             .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                                 cx.stop_propagation();
                             })
-                            .on_click(cx.listener(|this, _, window, cx| {
+                            .on_click(cx.listener(move |this, _, window, cx| {
                                 this.is_minimized = true;
                                 this.capture.pause();
-                                set_window_resize_constraint(
+                                set_window_resize_constraint_for(
+                                    Some(win_id),
                                     None,
                                     Some((180.0, 36.0)),
                                     Some((180.0, 36.0)),
@@ -801,7 +1021,7 @@ impl Render for MirrorView {
                                     .bg(rgb(0x374151)),
                             ),
                     )
-                    // Close button
+                    // Close mirror button (`✕`)
                     .child(
                         div()
                             .id("btn-close")
@@ -816,13 +1036,12 @@ impl Render for MirrorView {
                             .shadow_sm()
                             .cursor_pointer()
                             .hover(|s| s.bg(rgba(0xfff1f2fa)).border_color(rgba(0xe11d4840)))
-                            // Stop propagation so parent's start_window_move() doesn't intercept the click
                             .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                                 cx.stop_propagation();
                             })
-                            .on_click(|_, _, cx| {
-                                cx.quit();
-                            })
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.close_this_window(window, cx);
+                            }))
                             .child(
                                 div()
                                     .text_xs()

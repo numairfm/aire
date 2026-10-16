@@ -87,27 +87,54 @@ pub struct WaylandResizeConstraint {
     pub max_size: Option<(f32, f32)>,
 }
 
-static WAYLAND_RESIZE_CONSTRAINT: parking_lot::Mutex<WaylandResizeConstraint> =
-    parking_lot::Mutex::new(WaylandResizeConstraint {
-        aspect_ratio: None,
-        min_size: None,
-        max_size: None,
-    });
+#[derive(Default)]
+struct WaylandResizeConstraintStore {
+    default_constraint: WaylandResizeConstraint,
+    by_window: collections::FxHashMap<u64, WaylandResizeConstraint>,
+}
+
+static WAYLAND_RESIZE_CONSTRAINTS: std::sync::LazyLock<
+    parking_lot::Mutex<WaylandResizeConstraintStore>,
+> = std::sync::LazyLock::new(|| parking_lot::Mutex::new(WaylandResizeConstraintStore::default()));
 
 pub fn set_wayland_resize_constraint(
     aspect_ratio: Option<f32>,
     min_size: Option<(f32, f32)>,
     max_size: Option<(f32, f32)>,
 ) {
-    *WAYLAND_RESIZE_CONSTRAINT.lock() = WaylandResizeConstraint {
+    set_wayland_resize_constraint_for(None, aspect_ratio, min_size, max_size);
+}
+
+pub fn set_wayland_resize_constraint_for(
+    window_id: Option<u64>,
+    aspect_ratio: Option<f32>,
+    min_size: Option<(f32, f32)>,
+    max_size: Option<(f32, f32)>,
+) {
+    let constraint = WaylandResizeConstraint {
         aspect_ratio,
         min_size,
         max_size,
     };
+    let mut store = WAYLAND_RESIZE_CONSTRAINTS.lock();
+    if let Some(id) = window_id {
+        store.by_window.insert(id, constraint);
+    } else {
+        store.default_constraint = constraint;
+    }
 }
 
-pub fn get_wayland_resize_constraint() -> WaylandResizeConstraint {
-    *WAYLAND_RESIZE_CONSTRAINT.lock()
+pub fn remove_wayland_resize_constraint(window_id: u64) {
+    WAYLAND_RESIZE_CONSTRAINTS.lock().by_window.remove(&window_id);
+}
+
+pub fn get_wayland_resize_constraint_for(window_id: u64) -> WaylandResizeConstraint {
+    let store = WAYLAND_RESIZE_CONSTRAINTS.lock();
+    store
+        .by_window
+        .get(&window_id)
+        .copied()
+        .unwrap_or(store.default_constraint)
 }
 
 impl WaylandResizeConstraint {
@@ -439,6 +466,15 @@ impl WaylandWindowState {
                 .set_max_size(max_texture_size, max_texture_size);
         }
 
+        // Snapshot current default constraint into this window's ID slot immediately
+        let initial_constraint = get_wayland_resize_constraint_for(handle.window_id().as_u64());
+        set_wayland_resize_constraint_for(
+            Some(handle.window_id().as_u64()),
+            initial_constraint.aspect_ratio,
+            initial_constraint.min_size,
+            initial_constraint.max_size,
+        );
+
         Ok(Self {
             surface_state,
             acknowledged_first_configure: false,
@@ -551,6 +587,7 @@ pub enum ImeInput {
 impl Drop for WaylandWindow {
     fn drop(&mut self) {
         let mut state = self.0.state.borrow_mut();
+        remove_wayland_resize_constraint(state.handle.window_id().as_u64());
         let surface_id = state.surface.id();
         if let Some(parent) = state.parent.as_ref() {
             parent.state.borrow_mut().children.remove(&surface_id);
@@ -738,7 +775,8 @@ impl WaylandWindowStatePtr {
             }
             {
                 let mut state = self.state.borrow_mut();
-                let constraint = get_wayland_resize_constraint();
+                let constraint =
+                    get_wayland_resize_constraint_for(state.handle.window_id().as_u64());
                 state.sync_toplevel_min_max(&constraint);
 
                 if let Some(mut configure) = state.in_progress_configure.take() {
@@ -1290,7 +1328,7 @@ impl PlatformWindow for WaylandWindow {
 
     fn resize(&mut self, size: Size<Pixels>) {
         let mut state = self.borrow_mut();
-        let constraint = get_wayland_resize_constraint();
+        let constraint = get_wayland_resize_constraint_for(state.handle.window_id().as_u64());
         state.sync_toplevel_min_max(&constraint);
         let state_ptr = self.0.clone();
 
@@ -1583,7 +1621,7 @@ impl PlatformWindow for WaylandWindow {
     fn start_window_resize(&self, edge: gpui::ResizeEdge) {
         let mut state = self.borrow_mut();
         state.active_resize_edge = Some(edge);
-        let constraint = get_wayland_resize_constraint();
+        let constraint = get_wayland_resize_constraint_for(state.handle.window_id().as_u64());
         state.sync_toplevel_min_max(&constraint);
         let serial = state.client.get_serial(SerialKind::MousePress);
         let seat = state.globals.seat.clone();
