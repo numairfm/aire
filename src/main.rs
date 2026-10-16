@@ -13,7 +13,7 @@ use gpui_platform::application;
 use crate::{
     config::AppConfig,
     notify::send_startup_notification,
-    state::{AppState, APP_ID},
+    state::{AppState, APP_ID, SETTINGS_APP_ID},
     tray::{start_system_tray, TrayCommand},
     window::configure_platform_window,
 };
@@ -22,9 +22,12 @@ fn main() -> Result<()> {
     // 1. Load persistent configuration
     let config = AppConfig::load();
 
-    // 2. Configure platform window rules (Always-on-top, noborder, skiptaskbar)
+    // 2. Configure platform window rules (Always-on-top, noborder, allow taskbar & switcher)
     if let Err(err) = configure_platform_window(APP_ID, config.always_on_top) {
         eprintln!("[WINDOW] Platform window setup warning: {:?}", err);
+    }
+    if let Err(err) = configure_platform_window(SETTINGS_APP_ID, false) {
+        eprintln!("[WINDOW] Settings window setup warning: {:?}", err);
     }
 
     // 3. Start cross-platform system tray icon & menu
@@ -74,6 +77,7 @@ fn main() -> Result<()> {
                                     state.close_all_mirrors(cx);
                                 });
                                 crate::window::cleanup_platform_window(APP_ID);
+                                crate::window::cleanup_platform_window(SETTINGS_APP_ID);
                                 cx.quit();
                             }
                         });

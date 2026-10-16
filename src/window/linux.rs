@@ -28,9 +28,9 @@ impl LinuxWindowManager {
                 ("aboverule", "2"),
                 ("noborder", "true"),
                 ("noborderrule", "2"),
-                ("skiptaskbar", "true"),
+                ("skiptaskbar", "false"),
                 ("skiptaskbarrule", "2"),
-                ("skipswitcher", "true"),
+                ("skipswitcher", "false"),
                 ("skipswitcherrule", "2"),
             ] {
                 for cmd in ["kwriteconfig6", "kwriteconfig5"] {
@@ -56,8 +56,8 @@ impl LinuxWindowManager {
                     if (client && (client.resourceClass == "{app_id}" || client.resourceName == "{app_id}")) {{
                         client.keepAbove = {above_str};
                         client.noBorder = true;
-                        client.skipTaskbar = true;
-                        client.skipSwitcher = true;
+                        client.skipTaskbar = false;
+                        client.skipSwitcher = false;
                     }}
                 }}
                 workspace.windowAdded.connect(enforce);

@@ -1,5 +1,5 @@
 use gpui::{
-    px, App, AppContext, Bounds, Context, Entity, Point, Size, WeakEntity,
+    px, App, AppContext, Bounds, Context, Entity, Point, Size, TitlebarOptions, WeakEntity,
     WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowHandle, WindowKind,
     WindowOptions,
 };
@@ -201,13 +201,19 @@ impl AppState {
                         origin: Point::new(origin_x, origin_y),
                         size: Size::new(win_width, win_height),
                     })),
-                    titlebar: None,
+                    titlebar: Some(TitlebarOptions {
+                        title: Some("aire - Mirror".into()),
+                        appears_transparent: true,
+                        traffic_light_position: None,
+                    }),
                     app_id: Some(APP_ID.to_string()),
                     window_decorations: Some(WindowDecorations::Client),
                     window_background: WindowBackgroundAppearance::Transparent,
-                    kind: WindowKind::PopUp,
+                    kind: WindowKind::Normal,
                     is_movable: true,
                     is_resizable: true,
+                    is_minimizable: true,
+                    focus: true,
                     window_min_size: Some(Size::new(px(min_bounds.0), px(min_bounds.1))),
                     ..Default::default()
                 };
@@ -216,7 +222,7 @@ impl AppState {
                 let mut created_entity: Option<WeakEntity<MirrorView>> = None;
 
                 if let Ok(handle) = cx.open_window(options, |_, cx| {
-                    cx.activate(false);
+                    cx.activate(true);
                     let view = cx.new(|cx| {
                         MirrorView::new(
                             cx,
@@ -283,13 +289,19 @@ impl AppState {
                 origin: Point::new(origin_x, origin_y),
                 size: Size::new(win_width, win_height),
             })),
-            titlebar: None,
+            titlebar: Some(TitlebarOptions {
+                title: Some("aire - Settings".into()),
+                appears_transparent: true,
+                traffic_light_position: None,
+            }),
             app_id: Some(SETTINGS_APP_ID.to_string()),
             window_decorations: Some(WindowDecorations::Client),
             window_background: WindowBackgroundAppearance::Transparent,
             kind: WindowKind::Normal,
             is_movable: true,
             is_resizable: false,
+            is_minimizable: true,
+            focus: true,
             window_min_size: Some(Size::new(win_width, win_height)),
             ..Default::default()
         };
