@@ -56,8 +56,8 @@ impl Render for SettingsView {
         set_window_resize_constraint_for(
             Some(win_id),
             None,
-            Some((460.0, 580.0)),
-            Some((460.0, 580.0)),
+            Some((460.0, 630.0)),
+            Some((460.0, 630.0)),
         );
 
         let win_w = f32::from(window.bounds().size.width).max(460.0);
@@ -118,6 +118,7 @@ impl Render for SettingsView {
                     .px_5()
                     .py_3p5()
                     .bg(rgb(0x0c0c0c))
+                    .rounded_t(px(15.0))
                     .border_b_1()
                     .border_color(rgb(0x262626))
                     .flex()
@@ -211,6 +212,7 @@ impl Render for SettingsView {
                     .flex()
                     .flex_col()
                     .gap_3p5()
+                    .overflow_hidden()
                     // 1. Stream Actions Card
                     .child(
                         div()
