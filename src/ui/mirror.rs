@@ -491,6 +491,7 @@ impl Render for MirrorView {
             .size_full()
             .relative()
             // White frosty glass / ceramic clay border
+            .bg(rgba(0xffffff28))
             .rounded(px(14.0))
             .border_4()
             .border_color(rgba(0xffffffea))
@@ -547,10 +548,11 @@ impl Render for MirrorView {
                     window.resize(size(px(target_w), px(target_h)));
                 }
             }))
-            // Video / Mirror Content Layer (100% 1:1 original colors)
+            // Video / Mirror Content Layer (fades to 35% translucent on hover)
             .child(
                 div()
                     .size_full()
+                    .opacity(if is_hovered { 0.35 } else { 1.0 })
                     .child(if let Some(ref img_data) = self.current_image {
                         gpui::img(img_data.clone())
                             .size_full()
