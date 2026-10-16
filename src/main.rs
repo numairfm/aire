@@ -28,10 +28,28 @@ fn main() -> Result<()> {
 
     // 3. Start window capture backend (user picks window in native KDE portal dialog)
     // If user cancels the picker or closes it, exit cleanly without opening any window
-    let Some(capture) = start_window_capture(event_tx)? else {
+    let Some((capture, initial_dims)) = start_window_capture(event_tx)? else {
         eprintln!("[AIRE] Window selection cancelled. Exiting.");
         return Ok(());
     };
+
+    let (source_w, source_h) = initial_dims.unwrap_or((1920, 1080));
+    let aspect_ratio = if source_h > 0 {
+        source_w as f32 / source_h as f32
+    } else {
+        16.0 / 9.0
+    };
+
+    // Calculate initial mirror window size shaped to the source aspect ratio
+    // Target ~400px width for standard/wide windows, or ~280px for vertical/portrait windows
+    let win_width = if aspect_ratio < 0.85 {
+        px(280.0) // compact width for tall/vertical windows
+    } else if aspect_ratio > 2.2 {
+        px(480.0) // wider for ultrawide windows
+    } else {
+        px(400.0) // standard width
+    };
+    let win_height = px((f32::from(win_width) / aspect_ratio).round().max(100.0));
 
     // 4. Run GPUI application now that window is selected
     application().run(move |cx: &mut App| {
@@ -41,10 +59,6 @@ fn main() -> Result<()> {
                 size: Size::new(px(1920.0), px(1080.0)),
             }
         });
-
-        // Default mirror size: 400px wide, 16:9 aspect ratio (225px)
-        let win_width = px(400.0);
-        let win_height = px(225.0);
 
         // Center on screen on app open as requested
         let origin_x = display_bounds.origin.x + (display_bounds.size.width - win_width) / 2.0;
@@ -68,7 +82,7 @@ fn main() -> Result<()> {
 
         cx.open_window(options, move |_, cx| {
             cx.activate(false);
-            cx.new(|cx| MirrorView::new(cx, capture, event_rx))
+            cx.new(|cx| MirrorView::new(cx, capture, event_rx, aspect_ratio, source_w, source_h))
         })
         .expect("Failed to open aire mirror window");
     });

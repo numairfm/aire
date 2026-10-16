@@ -22,6 +22,7 @@ pub struct MirrorView {
     error_message: Option<String>,
     last_window_width: f32,
     last_window_height: f32,
+    needs_aspect_adaptation: bool,
 }
 
 impl MirrorView {
@@ -29,6 +30,9 @@ impl MirrorView {
         cx: &mut Context<Self>,
         capture: Box<dyn WindowCapture>,
         event_rx: CaptureReceiver,
+        initial_aspect_ratio: f32,
+        initial_width: u32,
+        initial_height: u32,
     ) -> Self {
         // Spawn background listener for capture events (100% non-blocking)
         cx.spawn(async move |this: WeakEntity<Self>, cx| {
@@ -64,7 +68,11 @@ impl MirrorView {
                                         view.source_width = width;
                                         view.source_height = height;
                                         if height > 0 {
-                                            view.aspect_ratio = width as f32 / height as f32;
+                                            let new_aspect = width as f32 / height as f32;
+                                            if (view.aspect_ratio - new_aspect).abs() > 0.005 {
+                                                view.aspect_ratio = new_aspect;
+                                                view.needs_aspect_adaptation = true;
+                                            }
                                         }
                                         cx.notify();
                                     });
@@ -102,7 +110,11 @@ impl MirrorView {
                             view.source_width = frame.width;
                             view.source_height = frame.height;
                             if frame.height > 0 {
-                                view.aspect_ratio = frame.width as f32 / frame.height as f32;
+                                let frame_aspect = frame.width as f32 / frame.height as f32;
+                                if (view.aspect_ratio - frame_aspect).abs() > 0.005 {
+                                    view.aspect_ratio = frame_aspect;
+                                    view.needs_aspect_adaptation = true;
+                                }
                             }
                             if let Some(fps) = new_fps {
                                 view.fps = fps;
@@ -115,7 +127,11 @@ impl MirrorView {
                             view.source_width = width;
                             view.source_height = height;
                             if height > 0 {
-                                view.aspect_ratio = width as f32 / height as f32;
+                                let new_aspect = width as f32 / height as f32;
+                                if (view.aspect_ratio - new_aspect).abs() > 0.005 {
+                                    view.aspect_ratio = new_aspect;
+                                    view.needs_aspect_adaptation = true;
+                                }
                             }
                             cx.notify();
                         });
@@ -141,26 +157,77 @@ impl MirrorView {
         Self {
             capture,
             current_image: None,
-            source_width: 1920,
-            source_height: 1080,
-            aspect_ratio: 16.0 / 9.0,
+            source_width: initial_width,
+            source_height: initial_height,
+            aspect_ratio: initial_aspect_ratio,
             fps: 0.0,
             is_minimized: false,
             source_closed: false,
             error_message: None,
-            last_window_width: 400.0,
-            last_window_height: 225.0,
+            last_window_width: 0.0,
+            last_window_height: 0.0,
+            needs_aspect_adaptation: false,
         }
     }
 }
 
 impl Render for MirrorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Track current window size to restore after un-minimizing
+        // 1. Maintain Locked Aspect Ratio & Handle Source Resizing
         if !self.is_minimized {
             let bounds = window.bounds();
-            self.last_window_width = f32::from(bounds.size.width);
-            self.last_window_height = f32::from(bounds.size.height);
+            let current_w = f32::from(bounds.size.width);
+            let current_h = f32::from(bounds.size.height);
+
+            // Compute minimum bounds clamped to aspect ratio
+            let min_w = if self.aspect_ratio >= 1.0 {
+                240.0
+            } else {
+                (240.0 * self.aspect_ratio).round().max(140.0)
+            };
+            let min_h = if self.aspect_ratio >= 1.0 {
+                (min_w / self.aspect_ratio).round().max(120.0)
+            } else {
+                240.0
+            };
+
+            if self.needs_aspect_adaptation {
+                self.needs_aspect_adaptation = false;
+                // Preserve current width and adapt height to source aspect ratio
+                let target_w = current_w.max(min_w);
+                let target_h = (target_w / self.aspect_ratio).round().max(min_h);
+                self.last_window_width = target_w;
+                self.last_window_height = target_h;
+                if (current_w - target_w).abs() > 1.5 || (current_h - target_h).abs() > 1.5 {
+                    window.resize(size(px(target_w), px(target_h)));
+                }
+            } else if self.last_window_width > 0.0 && self.last_window_height > 0.0 {
+                let dw = (current_w - self.last_window_width).abs();
+                let dh = (current_h - self.last_window_height).abs();
+
+                if dw > 2.0 || dh > 2.0 {
+                    // Resizing occurred! Determine locked dimensions based on which axis drove the resize
+                    let (target_w, target_h) = if dw >= dh {
+                        let w = current_w.max(min_w);
+                        let h = (w / self.aspect_ratio).round().max(min_h);
+                        (w, h)
+                    } else {
+                        let h = current_h.max(min_h);
+                        let w = (h * self.aspect_ratio).round().max(min_w);
+                        (w, h)
+                    };
+
+                    self.last_window_width = target_w;
+                    self.last_window_height = target_h;
+
+                    if (current_w - target_w).abs() > 1.5 || (current_h - target_h).abs() > 1.5 {
+                        window.resize(size(px(target_w), px(target_h)));
+                    }
+                }
+            } else {
+                self.last_window_width = current_w;
+                self.last_window_height = current_h;
+            }
         }
 
         // 1. Minimized Pill State
@@ -462,7 +529,7 @@ impl Render for MirrorView {
                     .absolute()
                     .bottom_0()
                     .right_0()
-                    .size(px(14.0))
+                    .size(px(16.0))
                     .cursor_nwse_resize()
                     .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
                         cx.stop_propagation();
@@ -475,7 +542,7 @@ impl Render for MirrorView {
                     .absolute()
                     .bottom_0()
                     .left_0()
-                    .size(px(14.0))
+                    .size(px(16.0))
                     .cursor_nesw_resize()
                     .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
                         cx.stop_propagation();
@@ -488,7 +555,7 @@ impl Render for MirrorView {
                     .absolute()
                     .top_0()
                     .left_0()
-                    .size(px(14.0))
+                    .size(px(16.0))
                     .cursor_nwse_resize()
                     .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
                         cx.stop_propagation();
@@ -501,7 +568,7 @@ impl Render for MirrorView {
                     .absolute()
                     .top_0()
                     .right_0()
-                    .size(px(14.0))
+                    .size(px(16.0))
                     .cursor_nesw_resize()
                     .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
                         cx.stop_propagation();

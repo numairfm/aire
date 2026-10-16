@@ -20,12 +20,16 @@ use spa::pod::Pod;
 
 use super::{CaptureEvent, CaptureSender, CapturedFrame, WindowCapture};
 
+use std::time::Duration;
+
 pub struct LinuxWindowCapture {
     is_paused: Arc<AtomicBool>,
 }
 
 impl LinuxWindowCapture {
-    pub fn start(event_tx: CaptureSender) -> Result<Option<Box<dyn WindowCapture>>> {
+    pub fn start(
+        event_tx: CaptureSender,
+    ) -> Result<Option<(Box<dyn WindowCapture>, Option<(u32, u32)>)>> {
         eprintln!("[PORTAL] Requesting window selection from XDG Desktop Portal...");
         let portal_res = async_io::block_on(async {
             let proxy = Screencast::new().await.context("Failed to connect to ScreenCast portal")?;
@@ -75,16 +79,36 @@ impl LinuxWindowCapture {
 
         let is_paused_clone = is_paused.clone();
         let tx = event_tx.clone();
+        let (dim_tx, dim_rx) = crossbeam_channel::bounded::<(u32, u32)>(1);
 
         thread::spawn(move || {
-            if let Err(err) = run_pipewire_loop(node_id, pw_fd, tx.clone(), is_paused_clone, is_running) {
+            if let Err(err) = run_pipewire_loop(
+                node_id,
+                pw_fd,
+                tx.clone(),
+                is_paused_clone,
+                is_running,
+                Some(dim_tx),
+            ) {
                 let _ = tx.try_send(CaptureEvent::Error(format!("PipeWire stream error: {}", err)));
             }
         });
 
-        Ok(Some(Box::new(LinuxWindowCapture {
-            is_paused,
-        })))
+        // Wait briefly (up to 150ms) for format negotiation so window opens at exact aspect ratio immediately
+        let initial_dims = dim_rx.recv_timeout(Duration::from_millis(150)).ok();
+        if let Some((w, h)) = initial_dims {
+            eprintln!(
+                "[PIPEWIRE] Initial source window dimensions: {}x{} (ratio: {:.3})",
+                w,
+                h,
+                w as f32 / h as f32
+            );
+        }
+
+        Ok(Some((
+            Box::new(LinuxWindowCapture { is_paused }),
+            initial_dims,
+        )))
     }
 }
 
@@ -101,6 +125,7 @@ impl WindowCapture for LinuxWindowCapture {
 struct StreamContext {
     format: spa::param::video::VideoInfoRaw,
     event_tx: CaptureSender,
+    initial_dim_tx: Option<crossbeam_channel::Sender<(u32, u32)>>,
     is_paused: Arc<AtomicBool>,
     is_running: Arc<AtomicBool>,
     last_width: u32,
@@ -113,6 +138,7 @@ fn run_pipewire_loop(
     event_tx: CaptureSender,
     is_paused: Arc<AtomicBool>,
     is_running: Arc<AtomicBool>,
+    initial_dim_tx: Option<crossbeam_channel::Sender<(u32, u32)>>,
 ) -> Result<()> {
     pw::init();
 
@@ -128,6 +154,7 @@ fn run_pipewire_loop(
     let stream_ctx = StreamContext {
         format: Default::default(),
         event_tx: event_tx.clone(),
+        initial_dim_tx,
         is_paused,
         is_running: is_running.clone(),
         last_width: 0,
@@ -171,6 +198,9 @@ fn run_pipewire_loop(
 
             if ctx.format.parse(param).is_ok() {
                 let size = ctx.format.size();
+                if let Some(dim_tx) = ctx.initial_dim_tx.take() {
+                    let _ = dim_tx.try_send((size.width, size.height));
+                }
                 if size.width != ctx.last_width || size.height != ctx.last_height {
                     ctx.last_width = size.width;
                     ctx.last_height = size.height;

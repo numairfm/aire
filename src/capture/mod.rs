@@ -32,7 +32,9 @@ pub trait WindowCapture: Send + Sync {
 #[cfg(target_os = "linux")]
 pub mod linux;
 
-pub fn start_window_capture(event_tx: CaptureSender) -> Result<Option<Box<dyn WindowCapture>>> {
+pub fn start_window_capture(
+    event_tx: CaptureSender,
+) -> Result<Option<(Box<dyn WindowCapture>, Option<(u32, u32)>)>> {
     #[cfg(target_os = "linux")]
     {
         linux::LinuxWindowCapture::start(event_tx)
