@@ -16,6 +16,7 @@ use crate::{
 pub struct MirrorView {
     capture: Box<dyn WindowCapture>,
     current_image: Option<Arc<RenderImage>>,
+    retired_images: Vec<Arc<RenderImage>>,
     source_width: u32,
     source_height: u32,
     aspect_ratio: f32,
@@ -134,6 +135,10 @@ impl MirrorView {
                                 }
                                 CaptureEvent::SourceClosed => {
                                     let _ = this.update(cx, |view, cx| {
+                                        if let Some(old_img) = view.current_image.take() {
+                                            cx.drop_image(old_img.clone(), None);
+                                            view.retired_images.push(old_img);
+                                        }
                                         view.source_closed = true;
                                         cx.notify();
                                     });
@@ -161,7 +166,10 @@ impl MirrorView {
                         }
 
                         let _ = this.update(cx, |view, cx| {
-                            view.current_image = Some(frame.render_image);
+                            if let Some(old_img) = view.current_image.replace(frame.render_image) {
+                                cx.drop_image(old_img.clone(), None);
+                                view.retired_images.push(old_img);
+                            }
                             view.source_width = frame.width;
                             view.source_height = frame.height;
                             if frame.height > 0 {
@@ -193,6 +201,10 @@ impl MirrorView {
                     }
                     CaptureEvent::SourceClosed => {
                         let _ = this.update(cx, |view, cx| {
+                            if let Some(old_img) = view.current_image.take() {
+                                cx.drop_image(old_img.clone(), None);
+                                view.retired_images.push(old_img);
+                            }
                             view.source_closed = true;
                             cx.notify();
                         });
@@ -212,6 +224,7 @@ impl MirrorView {
         Self {
             capture,
             current_image: None,
+            retired_images: Vec::with_capacity(4),
             source_width: initial_width,
             source_height: initial_height,
             aspect_ratio: initial_aspect_ratio,
@@ -228,6 +241,11 @@ impl MirrorView {
 
 impl Render for MirrorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Evict all retired frame textures from this window's WGPU sprite atlas before painting
+        for old_img in self.retired_images.drain(..) {
+            cx.drop_image(old_img, Some(window));
+        }
+
         // 1. Sync Wayland protocol-level aspect ratio & boundary constraints
         if !self.is_minimized {
             let bounds = window.bounds();

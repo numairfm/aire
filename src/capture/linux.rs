@@ -130,6 +130,7 @@ struct StreamContext {
     is_running: Arc<AtomicBool>,
     last_width: u32,
     last_height: u32,
+    last_frame_sent: std::time::Instant,
 }
 
 fn run_pipewire_loop(
@@ -159,6 +160,7 @@ fn run_pipewire_loop(
         is_running: is_running.clone(),
         last_width: 0,
         last_height: 0,
+        last_frame_sent: std::time::Instant::now() - Duration::from_secs(1),
     };
 
     let stream = pw::stream::StreamBox::new(
@@ -212,20 +214,25 @@ fn run_pipewire_loop(
             }
         })
         .process(|stream, ctx| {
-            if !ctx.is_running.load(Ordering::Relaxed) {
-                return;
-            }
-
-            if ctx.is_paused.load(Ordering::Relaxed) {
-                if let Some(buf) = stream.dequeue_buffer() {
-                    drop(buf);
-                }
-                return;
-            }
-
+            // Always dequeue the buffer first so PipeWire's buffer pool never stalls
             let Some(mut buffer) = stream.dequeue_buffer() else {
                 return;
             };
+
+            if !ctx.is_running.load(Ordering::Relaxed) || ctx.is_paused.load(Ordering::Relaxed) {
+                return;
+            }
+
+            // Do not allocate heap memory or create RenderImages if the UI hasn't consumed the queued frame yet
+            if ctx.event_tx.is_full() {
+                return;
+            }
+
+            // Cap capture processing to ~60 FPS (16ms interval) to prevent GPU/CPU thrashing on high-refresh monitors
+            let now = std::time::Instant::now();
+            if now.duration_since(ctx.last_frame_sent) < Duration::from_millis(16) {
+                return;
+            }
 
             let datas = buffer.datas_mut();
             if datas.is_empty() {
@@ -240,12 +247,21 @@ fn run_pipewire_loop(
 
             let data = &mut datas[0];
             let chunk_size = data.chunk().size() as usize;
+            let stride = data.chunk().stride() as usize;
             let Some(slice) = data.data() else {
                 return;
             };
 
-            let needed_bytes = (width * height * 4) as usize;
-            if slice.len() < chunk_size || chunk_size < needed_bytes {
+            let row_bytes = (width as usize) * 4;
+            let src_stride = if stride >= row_bytes { stride } else { row_bytes };
+            let needed_src_bytes = if height > 1 {
+                src_stride * ((height as usize) - 1) + row_bytes
+            } else {
+                row_bytes
+            };
+            let needed_dst_bytes = row_bytes * (height as usize);
+
+            if slice.len() < chunk_size || chunk_size < needed_src_bytes {
                 return;
             }
 
@@ -253,40 +269,51 @@ fn run_pipewire_loop(
             let video_fmt = ctx.format.format();
 
             // GPUI's WGPU atlas texture expects BGRA8 data.
-            let mut bgra_buf = vec![0u8; needed_bytes];
-            match video_fmt {
-                spa::param::video::VideoFormat::BGRx | spa::param::video::VideoFormat::BGRA => {
-                    // Source is already BGR(x/A), copy directly and ensure alpha is opaque
-                    bgra_buf[..needed_bytes].copy_from_slice(&raw_bytes[..needed_bytes]);
-                    for i in (0..needed_bytes).step_by(4) {
-                        bgra_buf[i + 3] = 255;
-                    }
+            let mut bgra_buf = vec![0u8; needed_dst_bytes];
+            let is_rgba_order = matches!(
+                video_fmt,
+                spa::param::video::VideoFormat::RGBA | spa::param::video::VideoFormat::RGBx
+            );
+
+            if !is_rgba_order && src_stride == row_bytes {
+                // Fast contiguous copy for BGRx/BGRA
+                bgra_buf.copy_from_slice(&raw_bytes[..needed_dst_bytes]);
+                for pixel in bgra_buf.chunks_exact_mut(4) {
+                    pixel[3] = 255;
                 }
-                spa::param::video::VideoFormat::RGBA | spa::param::video::VideoFormat::RGBx => {
-                    // Source is RGB(A/x), convert to BGRA by swapping R (index 0) and B (index 2)
-                    for i in (0..needed_bytes).step_by(4) {
-                        bgra_buf[i] = raw_bytes[i + 2];     // B
-                        bgra_buf[i + 1] = raw_bytes[i + 1]; // G
-                        bgra_buf[i + 2] = raw_bytes[i];     // R
-                        bgra_buf[i + 3] = 255;              // A
-                    }
-                }
-                _other => {
-                    // Default fallback to direct copy with opaque alpha
-                    bgra_buf[..needed_bytes].copy_from_slice(&raw_bytes[..needed_bytes]);
-                    for i in (0..needed_bytes).step_by(4) {
-                        bgra_buf[i + 3] = 255;
+            } else {
+                for y in 0..(height as usize) {
+                    let src_row = &raw_bytes[y * src_stride..y * src_stride + row_bytes];
+                    let dst_row = &mut bgra_buf[y * row_bytes..(y + 1) * row_bytes];
+                    if is_rgba_order {
+                        for (dst, src) in dst_row.chunks_exact_mut(4).zip(src_row.chunks_exact(4)) {
+                            dst[0] = src[2]; // B
+                            dst[1] = src[1]; // G
+                            dst[2] = src[0]; // R
+                            dst[3] = 255;    // A
+                        }
+                    } else {
+                        dst_row.copy_from_slice(src_row);
+                        for pixel in dst_row.chunks_exact_mut(4) {
+                            pixel[3] = 255;
+                        }
                     }
                 }
             }
 
             if let Some(img_buffer) = ImageBuffer::from_raw(width, height, bgra_buf) {
                 let render_image = Arc::new(gpui::RenderImage::new(smallvec![Frame::new(img_buffer)]));
-                let _ = ctx.event_tx.try_send(CaptureEvent::Frame(CapturedFrame {
-                    width,
-                    height,
-                    render_image,
-                }));
+                if ctx
+                    .event_tx
+                    .try_send(CaptureEvent::Frame(CapturedFrame {
+                        width,
+                        height,
+                        render_image,
+                    }))
+                    .is_ok()
+                {
+                    ctx.last_frame_sent = now;
+                }
             }
         })
         .register()?;
