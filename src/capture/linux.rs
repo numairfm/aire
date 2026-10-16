@@ -439,8 +439,8 @@ fn run_pipewire_loop(
                 height: 1
             },
             pw::spa::utils::Rectangle {
-                width: 4096,
-                height: 4096
+                width: 8192,
+                height: 8192
             }
         ),
         pw::spa::pod::property!(
@@ -449,8 +449,8 @@ fn run_pipewire_loop(
             Range,
             Fraction,
             pw::spa::utils::Fraction { num: 60, denom: 1 },
-            pw::spa::utils::Fraction { num: 1, denom: 1 },
-            pw::spa::utils::Fraction { num: 60, denom: 1 }
+            pw::spa::utils::Fraction { num: 0, denom: 1 },
+            pw::spa::utils::Fraction { num: 1000, denom: 1 }
         ),
     );
 
