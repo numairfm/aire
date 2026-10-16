@@ -3,6 +3,7 @@ use anyhow::Result;
 use gpui::RenderImage;
 
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct CapturedFrame {
     pub width: u32,
     pub height: u32,
@@ -10,6 +11,7 @@ pub struct CapturedFrame {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 pub enum CaptureEvent {
     Frame(CapturedFrame),
     Resized { width: u32, height: u32 },

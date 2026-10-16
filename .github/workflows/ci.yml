@@ -28,6 +28,9 @@ jobs:
             clang \
             libpipewire-0.3-dev \
             libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libfontconfig1-dev \
+            libfreetype6-dev \
             libvulkan-dev \
             libasound2-dev \
             libssl-dev \
@@ -36,7 +39,7 @@ jobs:
             file
 
       - name: Build release binary
-        run: cargo build --release --locked
+        run: cargo build --release --locked --bin aire
 
       - name: Package AppImage
         run: |
@@ -69,18 +72,32 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Configure Clang for bindgen
+        run: |
+          CLANG_DIR="$(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain/usr/lib"
+          if [ -f "$CLANG_DIR/libclang.dylib" ]; then
+            echo "LIBCLANG_PATH=$CLANG_DIR" >> $GITHUB_ENV
+            echo "Found Xcode libclang at $CLANG_DIR"
+          else
+            brew install llvm
+            LLVM_PATH="$(brew --prefix llvm)/lib"
+            echo "LIBCLANG_PATH=$LLVM_PATH" >> $GITHUB_ENV
+            echo "Found Homebrew libclang at $LLVM_PATH"
+          fi
+
       - name: Build release binary
-        run: cargo build --release --locked
+        run: cargo build --release --locked --bin aire
 
       - name: Package macOS App and DMG
         run: |
           mkdir -p "aire.app/Contents/MacOS" "aire.app/Contents/Resources"
           cp target/release/aire "aire.app/Contents/MacOS/"
+          chmod +x "aire.app/Contents/MacOS/aire"
           cp assets/aire.png "aire.app/Contents/Resources/AppIcon.png"
 
           cat << 'EOF' > aire.app/Contents/Info.plist
           <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
               <key>CFBundleExecutable</key>
@@ -120,7 +137,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build release binary
-        run: cargo build --release --locked
+        run: cargo build --release --locked --bin aire
 
       - name: Upload Windows EXE
         uses: actions/upload-artifact@v4

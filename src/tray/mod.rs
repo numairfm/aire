@@ -57,6 +57,7 @@ pub fn start_system_tray() -> Result<(TrayHandle, async_channel::Receiver<TrayCo
 
 /// Generates the system tray icon from the embedded application logo in ARGB32 (network byte order)
 /// and RGBA32 formats so the tray icon displays the authentic aire logo across all platforms.
+#[allow(dead_code)]
 pub fn generate_tray_icon_argb32(size: u32) -> Vec<u8> {
     if let Ok(dyn_img) = image::load_from_memory(include_bytes!("../../assets/aire.png")) {
         let resized = dyn_img.resize_exact(size, size, image::imageops::FilterType::Lanczos3);
