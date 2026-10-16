@@ -4,7 +4,7 @@ use std::{
 };
 
 use gpui::{
-    canvas, div, point, prelude::*, px, rgb, rgba, size, Context, Entity, FontWeight, PathBuilder,
+    canvas, div, point, prelude::*, px, rgb, size, Context, Entity, FontWeight, PathBuilder,
     Render, RenderImage, ResizeEdge, ScrollWheelEvent, Task, WeakEntity, Window,
 };
 
@@ -451,7 +451,7 @@ impl Render for MirrorView {
             }
         }
 
-        // 2. Minimized Pill State (Dark Frosted Glass + 4px White Frosty Border)
+        // 2. Minimized Pill State (Opaque Black + Monochrome Dark Border)
         if self.is_minimized {
             return div()
                 .size_full()
@@ -459,10 +459,10 @@ impl Render for MirrorView {
                 .items_center()
                 .justify_between()
                 .px_3()
-                .bg(rgba(0x11131ae8))
+                .bg(rgb(0x000000))
                 .rounded(px(18.0))
-                .border_4()
-                .border_color(rgba(0xffffffea))
+                .border_3()
+                .border_color(rgb(0x262626))
                 .overflow_hidden()
                 .child(
                     div()
@@ -478,19 +478,19 @@ impl Render for MirrorView {
                             div()
                                 .size(px(8.0))
                                 .rounded(px(4.0))
-                                .bg(rgb(0x10b981)),
+                                .bg(rgb(0xffffff)),
                         )
                         .child(
                             div()
                                 .text_xs()
                                 .font_weight(FontWeight::BOLD)
-                                .text_color(rgb(0xf9fafb))
+                                .text_color(rgb(0xffffff))
                                 .child("aire"),
                         )
                         .child(
                             div()
                                 .text_xs()
-                                .text_color(rgb(0x6b7280))
+                                .text_color(rgb(0x737373))
                                 .child("⋮"),
                         ),
                 )
@@ -544,7 +544,7 @@ impl Render for MirrorView {
                             div()
                                 .text_xs()
                                 .font_weight(FontWeight::BOLD)
-                                .text_color(rgb(0xd1d5db))
+                                .text_color(rgb(0xa3a3a3))
                                 .hover(|s| s.text_color(rgb(0xffffff)))
                                 .child("restore ↗"),
                         ),
@@ -552,15 +552,15 @@ impl Render for MirrorView {
                 .into_any_element();
         }
 
-        // 3. Source Window Closed State (Dark Frosted Glass)
+        // 3. Source Window Closed State (Opaque Black + Monochrome Border)
         if self.source_closed {
             return div()
                 .size_full()
                 .relative()
-                .bg(rgba(0x0f1117e8))
+                .bg(rgb(0x000000))
                 .rounded(px(14.0))
                 .border_4()
-                .border_color(rgba(0xffffffea))
+                .border_color(rgb(0x222222))
                 .overflow_hidden()
                 .flex()
                 .flex_col()
@@ -575,13 +575,13 @@ impl Render for MirrorView {
                     div()
                         .text_sm()
                         .font_weight(FontWeight::BOLD)
-                        .text_color(rgb(0xf9fafb))
+                        .text_color(rgb(0xffffff))
                         .child("Source window closed"),
                 )
                 .child(
                     div()
                         .text_xs()
-                        .text_color(rgb(0x9ca3af))
+                        .text_color(rgb(0xa3a3a3))
                         .child("The mirrored window was closed."),
                 )
                 .child(
@@ -596,12 +596,12 @@ impl Render for MirrorView {
                                 .px_3()
                                 .py_1p5()
                                 .rounded(px(8.0))
-                                .bg(rgb(0x10b981))
+                                .bg(rgb(0xffffff))
                                 .text_xs()
                                 .font_weight(FontWeight::BOLD)
-                                .text_color(rgb(0x06281e))
+                                .text_color(rgb(0x000000))
                                 .cursor_pointer()
-                                .hover(|s| s.bg(rgb(0x34d399)))
+                                .hover(|s| s.bg(rgb(0xe5e5e5)))
                                 .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                                     cx.stop_propagation();
                                 })
@@ -616,14 +616,14 @@ impl Render for MirrorView {
                                 .px_3()
                                 .py_1p5()
                                 .rounded(px(8.0))
-                                .bg(rgba(0x262b3cd9))
+                                .bg(rgb(0x1a1a1a))
                                 .border_1()
-                                .border_color(rgba(0xffffff38))
+                                .border_color(rgb(0x2c2c2c))
                                 .text_xs()
                                 .font_weight(FontWeight::BOLD)
-                                .text_color(rgb(0xf9fafb))
+                                .text_color(rgb(0xffffff))
                                 .cursor_pointer()
-                                .hover(|s| s.bg(rgba(0x374151e8)).border_color(rgba(0xffffff66)))
+                                .hover(|s| s.bg(rgb(0x262626)).border_color(rgb(0x3a3a3a)))
                                 .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                                     cx.stop_propagation();
                                 })
@@ -636,15 +636,15 @@ impl Render for MirrorView {
                 .into_any_element();
         }
 
-        // 4. Error State (Dark Frosted Glass)
+        // 4. Error State (Opaque Black + Monochrome Border)
         if let Some(ref err) = self.error_message {
             return div()
                 .size_full()
                 .relative()
-                .bg(rgba(0x0f1117e8))
+                .bg(rgb(0x000000))
                 .rounded(px(14.0))
                 .border_4()
-                .border_color(rgba(0xffffffea))
+                .border_color(rgb(0x222222))
                 .overflow_hidden()
                 .flex()
                 .flex_col()
@@ -659,13 +659,13 @@ impl Render for MirrorView {
                     div()
                         .text_sm()
                         .font_weight(FontWeight::BOLD)
-                        .text_color(rgb(0xf87171))
+                        .text_color(rgb(0xffffff))
                         .child("Capture could not start"),
                 )
                 .child(
                     div()
                         .text_xs()
-                        .text_color(rgb(0xd1d5db))
+                        .text_color(rgb(0xa3a3a3))
                         .child(err.clone()),
                 )
                 .child(
@@ -680,12 +680,12 @@ impl Render for MirrorView {
                                 .px_3()
                                 .py_1p5()
                                 .rounded(px(8.0))
-                                .bg(rgb(0x10b981))
+                                .bg(rgb(0xffffff))
                                 .text_xs()
                                 .font_weight(FontWeight::BOLD)
-                                .text_color(rgb(0x06281e))
+                                .text_color(rgb(0x000000))
                                 .cursor_pointer()
-                                .hover(|s| s.bg(rgb(0x34d399)))
+                                .hover(|s| s.bg(rgb(0xe5e5e5)))
                                 .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                                     cx.stop_propagation();
                                 })
@@ -700,14 +700,14 @@ impl Render for MirrorView {
                                 .px_3()
                                 .py_1p5()
                                 .rounded(px(8.0))
-                                .bg(rgba(0x262b3cd9))
+                                .bg(rgb(0x1a1a1a))
                                 .border_1()
-                                .border_color(rgba(0xffffff38))
+                                .border_color(rgb(0x2c2c2c))
                                 .text_xs()
                                 .font_weight(FontWeight::BOLD)
-                                .text_color(rgb(0xf9fafb))
+                                .text_color(rgb(0xffffff))
                                 .cursor_pointer()
-                                .hover(|s| s.bg(rgba(0x374151e8)).border_color(rgba(0xffffff66)))
+                                .hover(|s| s.bg(rgb(0x262626)).border_color(rgb(0x3a3a3a)))
                                 .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                                     cx.stop_propagation();
                                 })
@@ -763,10 +763,10 @@ impl Render for MirrorView {
             .id("mirror-root")
             .size_full()
             .relative()
-            .bg(rgba(0x0d0f1440))
+            .bg(rgb(0x000000))
             .rounded(px(14.0))
             .border_4()
-            .border_color(rgba(0xffffffea))
+            .border_color(rgb(0x222222))
             .overflow_hidden()
             .on_mouse_down(gpui::MouseButton::Left, |_, window, _| {
                 window.start_window_move();
@@ -829,13 +829,13 @@ impl Render for MirrorView {
                     } else {
                         div()
                             .size_full()
-                            .bg(rgba(0x0f1117cc))
+                            .bg(rgb(0x000000))
                             .flex()
                             .flex_col()
                             .items_center()
                             .justify_center()
                             .gap_1()
-                            .text_color(rgb(0xd1d5db))
+                            .text_color(rgb(0xa3a3a3))
                             .child(
                                 div()
                                     .text_sm()
@@ -990,12 +990,12 @@ impl Render for MirrorView {
                         .px_2p5()
                         .py_1()
                         .rounded(px(8.0))
-                        .bg(rgba(0x11131acc))
+                        .bg(rgb(0x000000))
                         .border_1()
-                        .border_color(rgba(0xffffff38))
+                        .border_color(rgb(0x2c2c2c))
                         .text_xs()
                         .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(rgb(0xf9fafb))
+                        .text_color(rgb(0xffffff))
                         .opacity(if is_hovered { 0.98 } else { 0.65 })
                         .child(format!(
                             "{}×{} • {:.0} fps{}",
@@ -1006,7 +1006,7 @@ impl Render for MirrorView {
                         )),
                 )
             })
-            // Frosted Glass Window Controls Overlay (Top-Right: Switch Source, Minimize, Close)
+            // Monochrome Opaque Window Controls Overlay (Top-Right: Switch Source, Minimize, Close)
             .child(
                 div()
                     .absolute()
@@ -1016,7 +1016,7 @@ impl Render for MirrorView {
                     .items_center()
                     .gap_2()
                     .opacity(hud_opacity)
-                    // Switch Source button (`⇄`) — Frosted glass pill with precision vector canvas icon
+                    // Switch Source button (`⇄`) — Opaque monochrome pill with precision vector canvas icon
                     .child(
                         div()
                             .id("btn-switch-source")
@@ -1025,12 +1025,12 @@ impl Render for MirrorView {
                             .justify_center()
                             .size(px(30.0))
                             .rounded(px(15.0))
-                            .bg(rgba(0x161922bf))
+                            .bg(rgb(0x000000))
                             .border_1()
-                            .border_color(rgba(0xffffff55))
+                            .border_color(rgb(0x333333))
                             .shadow_sm()
                             .cursor_pointer()
-                            .hover(|s| s.bg(rgba(0x262b3ce6)).border_color(rgba(0xffffffaa)))
+                            .hover(|s| s.bg(rgb(0x1f1f1f)).border_color(rgb(0x555555)))
                             .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                                 cx.stop_propagation();
                             })
@@ -1070,7 +1070,7 @@ impl Render for MirrorView {
                                 .size(px(15.0)),
                             ),
                     )
-                    // Minimize to pill button (`—`) — Frosted glass pill with precision vector canvas bar
+                    // Minimize to pill button (`—`) — Opaque monochrome pill with precision vector canvas bar
                     .child(
                         div()
                             .id("btn-minimize")
@@ -1079,12 +1079,12 @@ impl Render for MirrorView {
                             .justify_center()
                             .size(px(30.0))
                             .rounded(px(15.0))
-                            .bg(rgba(0x161922bf))
+                            .bg(rgb(0x000000))
                             .border_1()
-                            .border_color(rgba(0xffffff55))
+                            .border_color(rgb(0x333333))
                             .shadow_sm()
                             .cursor_pointer()
-                            .hover(|s| s.bg(rgba(0x262b3ce6)).border_color(rgba(0xffffffaa)))
+                            .hover(|s| s.bg(rgb(0x1f1f1f)).border_color(rgb(0x555555)))
                             .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                                 cx.stop_propagation();
                             })
@@ -1120,14 +1120,14 @@ impl Render for MirrorView {
                                         b.move_to(point(cx - px(5.5), cy));
                                         b.line_to(point(cx + px(5.5), cy));
                                         if let Ok(path) = b.build() {
-                                            window.paint_path(path, rgb(0xffffff));
+                                             window.paint_path(path, rgb(0xffffff));
                                         }
                                     },
                                 )
                                 .size(px(14.0)),
                             ),
                     )
-                    // Close mirror button (`✕`) — Frosted glass pill with precision vector canvas cross
+                    // Close mirror button (`✕`) — Opaque monochrome pill with precision vector canvas cross
                     .child(
                         div()
                             .id("btn-close")
@@ -1136,12 +1136,12 @@ impl Render for MirrorView {
                             .justify_center()
                             .size(px(30.0))
                             .rounded(px(15.0))
-                            .bg(rgba(0x161922bf))
+                            .bg(rgb(0x000000))
                             .border_1()
-                            .border_color(rgba(0xffffff55))
+                            .border_color(rgb(0x333333))
                             .shadow_sm()
                             .cursor_pointer()
-                            .hover(|s| s.bg(rgba(0xe11d48d9)).border_color(rgba(0xffb4c4aa)))
+                            .hover(|s| s.bg(rgb(0x1f1f1f)).border_color(rgb(0x555555)))
                             .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                                 cx.stop_propagation();
                             })

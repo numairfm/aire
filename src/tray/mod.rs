@@ -74,14 +74,14 @@ pub fn generate_tray_icon_argb32(size: u32) -> Vec<u8> {
             let in_pip = fx >= 0.44 && fx <= 0.81 && fy >= 0.44 && fy <= 0.76;
 
             if in_pip {
-                // Emerald accent PiP window (#10b981) -> ARGB
-                data.extend_from_slice(&[255, 0x10, 0xb9, 0x81]);
+                // Monochrome solid white PiP window (#ffffff) -> ARGB
+                data.extend_from_slice(&[255, 255, 255, 255]);
             } else if is_outer_border {
-                // Crisp frosty white frame (#f9fafb) -> ARGB
-                data.extend_from_slice(&[245, 0xf9, 0xfa, 0xfb]);
+                // Crisp solid white frame (#ffffff) -> ARGB
+                data.extend_from_slice(&[255, 255, 255, 255]);
             } else if in_outer_inner {
-                // Subtle translucent glass interior
-                data.extend_from_slice(&[70, 0xe5, 0xe7, 0xeb]);
+                // Opaque black/charcoal interior (#181818) -> ARGB
+                data.extend_from_slice(&[255, 24, 24, 24]);
             } else {
                 data.extend_from_slice(&[0, 0, 0, 0]);
             }
