@@ -558,7 +558,7 @@ impl Render for MirrorView {
                 .size_full()
                 .relative()
                 .bg(rgb(0x000000))
-                .rounded(px(14.0))
+                .rounded(px(16.0))
                 .border_1()
                 .border_color(rgb(0x333333))
                 .overflow_hidden()
@@ -642,7 +642,7 @@ impl Render for MirrorView {
                 .size_full()
                 .relative()
                 .bg(rgb(0x000000))
-                .rounded(px(14.0))
+                .rounded(px(16.0))
                 .border_1()
                 .border_color(rgb(0x333333))
                 .overflow_hidden()
@@ -763,9 +763,9 @@ impl Render for MirrorView {
             a: stream_opacity,
         };
         let outline_color = Rgba {
-            r: 0.22,
-            g: 0.22,
-            b: 0.22,
+            r: 0.25,
+            g: 0.25,
+            b: 0.25,
             a: stream_opacity,
         };
 
@@ -776,7 +776,7 @@ impl Render for MirrorView {
             .size_full()
             .relative()
             .bg(panel_bg)
-            .rounded(px(14.0))
+            .rounded(px(16.0))
             .border_1()
             .border_color(outline_color)
             .overflow_hidden()
@@ -829,11 +829,11 @@ impl Render for MirrorView {
                     window.resize(size(px(target_w), px(target_h)));
                 }
             }))
-            // Inner content framed strictly inside the border with 3px control-panel bezel
+            // Inner content framed strictly inside the border with 6px control-panel bezel
             .child(
                 div()
                     .absolute()
-                    .inset(px(3.0))
+                    .inset(px(6.0))
                     .rounded(px(10.0))
                     .border_1()
                     .border_color(outline_color)
