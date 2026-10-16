@@ -78,10 +78,12 @@ impl LinuxWindowCapture {
                 .open_pipe_wire_remote(&session, Default::default())
                 .await
                 .ok();
-            Ok::<Option<(u32, Option<OwnedFd>)>, anyhow::Error>(Some((node_id, pw_fd)))
+            Ok::<Option<(u32, Option<OwnedFd>, _, _)>, anyhow::Error>(Some((
+                node_id, pw_fd, proxy, session,
+            )))
         });
 
-        let (node_id, pw_fd) = match portal_res {
+        let (node_id, pw_fd, _proxy, session) = match portal_res {
             Ok(Some(data)) => data,
             Ok(None) => return Ok(None),
             Err(err) => {
@@ -102,6 +104,7 @@ impl LinuxWindowCapture {
         let (dim_tx, dim_rx) = crossbeam_channel::bounded::<(u32, u32)>(1);
 
         thread::spawn(move || {
+            let _keep_proxy = _proxy;
             if let Err(err) = run_pipewire_loop(
                 node_id,
                 pw_fd,
@@ -116,6 +119,7 @@ impl LinuxWindowCapture {
                     err
                 )));
             }
+            let _ = async_io::block_on(session.close());
         });
 
         // Wait briefly (up to 150ms) for format negotiation so window opens at exact aspect ratio immediately
