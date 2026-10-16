@@ -11,6 +11,17 @@ pub fn configure_platform_window(app_id: &str, always_on_top: bool) -> Result<()
     set_always_on_top(app_id, always_on_top)
 }
 
+pub fn cleanup_platform_window(app_id: &str) {
+    #[cfg(target_os = "linux")]
+    {
+        linux::LinuxWindowManager::cleanup(app_id);
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = app_id;
+    }
+}
+
 pub fn set_always_on_top(app_id: &str, enabled: bool) -> Result<()> {
     #[cfg(target_os = "linux")]
     {

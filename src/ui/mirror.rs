@@ -4,8 +4,8 @@ use std::{
 };
 
 use gpui::{
-    div, prelude::*, px, rgb, rgba, size, Context, Entity, FontWeight, Render, RenderImage,
-    ResizeEdge, ScrollWheelEvent, Task, WeakEntity, Window,
+    canvas, div, point, prelude::*, px, rgb, rgba, size, Context, Entity, FontWeight, PathBuilder,
+    Render, RenderImage, ResizeEdge, ScrollWheelEvent, Task, WeakEntity, Window,
 };
 
 use crate::{
@@ -102,6 +102,15 @@ impl MirrorView {
     ) -> Self {
         cx.observe(&app_state, |_, _, cx| {
             cx.notify();
+        })
+        .detach();
+
+        let state_for_release = app_state.clone();
+        cx.on_release(move |view, cx| {
+            view.capture.stop();
+            state_for_release.update(cx, |state, _| {
+                state.prune_closed_mirrors();
+            });
         })
         .detach();
 
@@ -210,9 +219,12 @@ impl MirrorView {
                             last_fps_time = now;
                         }
 
-                        let _ = this.update(cx, |view, cx| {
+                        let update_res = this.update(cx, |view, cx| {
                             if let Some(old_img) = view.current_image.replace(frame.render_image) {
                                 cx.drop_image(old_img.clone(), None);
+                                if view.retired_images.len() >= 2 {
+                                    view.retired_images.remove(0);
+                                }
                                 view.retired_images.push(old_img);
                             }
                             view.source_width = frame.width;
@@ -229,6 +241,9 @@ impl MirrorView {
                             }
                             cx.notify();
                         });
+                        if update_res.is_err() {
+                            break;
+                        }
                     }
                     CaptureEvent::Resized { width, height } => {
                         let _ = this.update(cx, |view, cx| {
@@ -314,11 +329,16 @@ impl MirrorView {
     }
 
     fn trigger_switch_source(&mut self, cx: &mut Context<Self>) {
-        if self.is_switching_source {
+        if self.is_switching_source || self.app_state.read(cx).is_picking_window {
             return;
         }
         self.is_switching_source = true;
         let target_fps = self.app_state.read(cx).config.target_fps;
+        let app_state_entity = self.app_state.clone();
+        app_state_entity.update(cx, |state, cx| {
+            state.is_picking_window = true;
+            cx.notify();
+        });
         cx.notify();
 
         cx.spawn(async move |this: WeakEntity<Self>, cx| {
@@ -331,6 +351,11 @@ impl MirrorView {
             });
 
             let capture_res = res_rx.recv().await;
+
+            let _ = app_state_entity.update(cx, |state, cx| {
+                state.is_picking_window = false;
+                cx.notify();
+            });
 
             let _ = this.update(cx, |view, cx| {
                 view.is_switching_source = false;
@@ -481,6 +506,9 @@ impl Render for MirrorView {
                         })
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.is_minimized = false;
+                            this.was_hovered = false;
+                            this.current_hover_t = 0.0;
+                            this.hover_transition_start = None;
                             if !this.is_paused_by_user {
                                 this.capture.resume();
                             }
@@ -642,25 +670,52 @@ impl Render for MirrorView {
                 )
                 .child(
                     div()
-                        .id("btn-exit-error")
+                        .flex()
+                        .items_center()
+                        .gap_2()
                         .mt_2()
-                        .px_3()
-                        .py_1p5()
-                        .rounded(px(8.0))
-                        .bg(rgba(0x262b3cd9))
-                        .border_1()
-                        .border_color(rgba(0xffffff38))
-                        .text_xs()
-                        .font_weight(FontWeight::BOLD)
-                        .text_color(rgb(0xf9fafb))
-                        .cursor_pointer()
-                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
-                            cx.stop_propagation();
-                        })
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.close_this_window(window, cx);
-                        }))
-                        .child("Close Mirror"),
+                        .child(
+                            div()
+                                .id("btn-switch-error")
+                                .px_3()
+                                .py_1p5()
+                                .rounded(px(8.0))
+                                .bg(rgb(0x10b981))
+                                .text_xs()
+                                .font_weight(FontWeight::BOLD)
+                                .text_color(rgb(0x06281e))
+                                .cursor_pointer()
+                                .hover(|s| s.bg(rgb(0x34d399)))
+                                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                                    cx.stop_propagation();
+                                })
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.trigger_switch_source(cx);
+                                }))
+                                .child("Switch Window"),
+                        )
+                        .child(
+                            div()
+                                .id("btn-exit-error")
+                                .px_3()
+                                .py_1p5()
+                                .rounded(px(8.0))
+                                .bg(rgba(0x262b3cd9))
+                                .border_1()
+                                .border_color(rgba(0xffffff38))
+                                .text_xs()
+                                .font_weight(FontWeight::BOLD)
+                                .text_color(rgb(0xf9fafb))
+                                .cursor_pointer()
+                                .hover(|s| s.bg(rgba(0x374151e8)).border_color(rgba(0xffffff66)))
+                                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                                    cx.stop_propagation();
+                                })
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.close_this_window(window, cx);
+                                }))
+                                .child("Close Mirror"),
+                        ),
                 )
                 .into_any_element();
         }
@@ -961,7 +1016,7 @@ impl Render for MirrorView {
                     .items_center()
                     .gap_2()
                     .opacity(hud_opacity)
-                    // Switch Source button (`⇄`) — Frosted glass pill with bold centered icon
+                    // Switch Source button (`⇄`) — Frosted glass pill with precision vector canvas icon
                     .child(
                         div()
                             .id("btn-switch-source")
@@ -983,18 +1038,39 @@ impl Render for MirrorView {
                                 this.trigger_switch_source(cx);
                             }))
                             .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .text_size(px(15.0))
-                                    .line_height(px(15.0))
-                                    .font_weight(FontWeight::EXTRA_BOLD)
-                                    .text_color(rgb(0xffffff))
-                                    .child("⇄"),
+                                canvas(
+                                    |_, _, _| {},
+                                    move |bounds, _, window, _| {
+                                        let cx = bounds.origin.x + bounds.size.width / 2.0;
+                                        let cy = bounds.origin.y + bounds.size.height / 2.0;
+
+                                        // Top arrow (pointing right)
+                                        let mut b1 = PathBuilder::stroke(px(1.8));
+                                        b1.move_to(point(cx - px(5.5), cy - px(2.5)));
+                                        b1.line_to(point(cx + px(5.0), cy - px(2.5)));
+                                        b1.move_to(point(cx + px(2.2), cy - px(5.5)));
+                                        b1.line_to(point(cx + px(5.0), cy - px(2.5)));
+                                        b1.line_to(point(cx + px(2.2), cy + px(0.5)));
+                                        if let Ok(path) = b1.build() {
+                                            window.paint_path(path, rgb(0xffffff));
+                                        }
+
+                                        // Bottom arrow (pointing left)
+                                        let mut b2 = PathBuilder::stroke(px(1.8));
+                                        b2.move_to(point(cx + px(5.5), cy + px(2.5)));
+                                        b2.line_to(point(cx - px(5.0), cy + px(2.5)));
+                                        b2.move_to(point(cx - px(2.2), cy - px(0.5)));
+                                        b2.line_to(point(cx - px(5.0), cy + px(2.5)));
+                                        b2.line_to(point(cx - px(2.2), cy + px(5.5)));
+                                        if let Ok(path) = b2.build() {
+                                            window.paint_path(path, rgb(0xffffff));
+                                        }
+                                    },
+                                )
+                                .size(px(15.0)),
                             ),
                     )
-                    // Minimize to pill button (`—`) — Frosted glass pill with bold centered geometric bar
+                    // Minimize to pill button (`—`) — Frosted glass pill with precision vector canvas bar
                     .child(
                         div()
                             .id("btn-minimize")
@@ -1013,7 +1089,17 @@ impl Render for MirrorView {
                                 cx.stop_propagation();
                             })
                             .on_click(cx.listener(move |this, _, window, cx| {
+                                let cur_bounds = window.bounds();
+                                let w_f32 = f32::from(cur_bounds.size.width);
+                                let h_f32 = f32::from(cur_bounds.size.height);
+                                if w_f32 > 190.0 && h_f32 > 45.0 {
+                                    this.last_window_width = w_f32;
+                                    this.last_window_height = h_f32;
+                                }
                                 this.is_minimized = true;
+                                this.was_hovered = false;
+                                this.current_hover_t = 0.0;
+                                this.hover_transition_start = None;
                                 this.capture.pause();
                                 set_window_resize_constraint_for(
                                     Some(win_id),
@@ -1025,14 +1111,23 @@ impl Render for MirrorView {
                                 cx.notify();
                             }))
                             .child(
-                                div()
-                                    .w(px(12.0))
-                                    .h(px(2.5))
-                                    .rounded(px(1.25))
-                                    .bg(rgb(0xffffff)),
+                                canvas(
+                                    |_, _, _| {},
+                                    move |bounds, _, window, _| {
+                                        let cx = bounds.origin.x + bounds.size.width / 2.0;
+                                        let cy = bounds.origin.y + bounds.size.height / 2.0;
+                                        let mut b = PathBuilder::stroke(px(2.2));
+                                        b.move_to(point(cx - px(5.5), cy));
+                                        b.line_to(point(cx + px(5.5), cy));
+                                        if let Ok(path) = b.build() {
+                                            window.paint_path(path, rgb(0xffffff));
+                                        }
+                                    },
+                                )
+                                .size(px(14.0)),
                             ),
                     )
-                    // Close mirror button (`✕`) — Frosted glass pill with bold centered X
+                    // Close mirror button (`✕`) — Frosted glass pill with precision vector canvas cross
                     .child(
                         div()
                             .id("btn-close")
@@ -1054,15 +1149,27 @@ impl Render for MirrorView {
                                 this.close_this_window(window, cx);
                             }))
                             .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .text_size(px(14.0))
-                                    .line_height(px(14.0))
-                                    .font_weight(FontWeight::EXTRA_BOLD)
-                                    .text_color(rgb(0xffffff))
-                                    .child("✕"),
+                                canvas(
+                                    |_, _, _| {},
+                                    move |bounds, _, window, _| {
+                                        let cx = bounds.origin.x + bounds.size.width / 2.0;
+                                        let cy = bounds.origin.y + bounds.size.height / 2.0;
+                                        let r = px(4.5);
+                                        let mut b1 = PathBuilder::stroke(px(2.2));
+                                        b1.move_to(point(cx - r, cy - r));
+                                        b1.line_to(point(cx + r, cy + r));
+                                        if let Ok(path) = b1.build() {
+                                            window.paint_path(path, rgb(0xffffff));
+                                        }
+                                        let mut b2 = PathBuilder::stroke(px(2.2));
+                                        b2.move_to(point(cx + r, cy - r));
+                                        b2.line_to(point(cx - r, cy + r));
+                                        if let Ok(path) = b2.build() {
+                                            window.paint_path(path, rgb(0xffffff));
+                                        }
+                                    },
+                                )
+                                .size(px(14.0)),
                             ),
                     ),
             )

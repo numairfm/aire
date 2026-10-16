@@ -73,6 +73,7 @@ fn main() -> Result<()> {
                                 state_entity.update(cx, |state, cx| {
                                     state.close_all_mirrors(cx);
                                 });
+                                crate::window::cleanup_platform_window(APP_ID);
                                 cx.quit();
                             }
                         });

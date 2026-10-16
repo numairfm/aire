@@ -261,7 +261,7 @@ impl AppState {
         }
 
         let win_width = px(460.0);
-        let win_height = px(560.0);
+        let win_height = px(580.0);
 
         let display_bounds =
             cx.displays()
@@ -275,8 +275,8 @@ impl AppState {
         let origin_x = display_bounds.origin.x + (display_bounds.size.width - win_width) / 2.0;
         let origin_y = display_bounds.origin.y + (display_bounds.size.height - win_height) / 2.0;
 
-        // Lock the Settings window to its exact 460x560 size
-        set_window_resize_constraint(None, Some((460.0, 560.0)), Some((460.0, 560.0)));
+        // Lock the Settings window to its exact 460x580 size
+        set_window_resize_constraint(None, Some((460.0, 580.0)), Some((460.0, 580.0)));
 
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds {

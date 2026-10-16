@@ -1,6 +1,6 @@
 use gpui::{
-    div, prelude::*, px, rgb, rgba, Context, Entity, FontWeight, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Render, Window,
+    canvas, div, point, prelude::*, px, rgb, rgba, Context, Entity, FontWeight, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, PathBuilder, Render, Window,
 };
 
 use crate::{
@@ -21,6 +21,14 @@ impl SettingsView {
         })
         .detach();
 
+        let state_for_release = app_state.clone();
+        cx.on_release(move |_, cx| {
+            state_for_release.update(cx, |state, _| {
+                state.settings_window = None;
+            });
+        })
+        .detach();
+
         Self {
             app_state,
             is_dragging_slider: false,
@@ -28,8 +36,8 @@ impl SettingsView {
     }
 
     fn update_slider_from_x(&mut self, mouse_x: f32, window_width: f32, cx: &mut Context<Self>) {
-        let track_left = 40.0f32;
-        let track_right = (window_width - 40.0).max(track_left + 100.0);
+        let track_left = 37.0f32;
+        let track_right = (window_width - 37.0).max(track_left + 100.0);
         let t = ((mouse_x - track_left) / (track_right - track_left)).clamp(0.0, 1.0);
         let opacity = (0.05 + t * 0.95).clamp(0.05, 1.0);
         let rounded = (opacity * 100.0).round() / 100.0;
@@ -48,24 +56,30 @@ impl Render for SettingsView {
         set_window_resize_constraint_for(
             Some(win_id),
             None,
-            Some((460.0, 560.0)),
-            Some((460.0, 560.0)),
+            Some((460.0, 580.0)),
+            Some((460.0, 580.0)),
         );
 
         let win_w = f32::from(window.bounds().size.width).max(460.0);
-        let (config, active_mirrors, is_picking) = {
+        let (config, active_mirrors, is_picking, all_paused) = {
             let state = self.app_state.read(cx);
             let count = state
                 .mirrors
                 .iter()
                 .filter(|m| m.entity.upgrade().is_some())
                 .count();
-            (state.config.clone(), count, state.is_picking_window)
+            let all_paused = count > 0
+                && state
+                    .mirrors
+                    .iter()
+                    .filter_map(|m| m.entity.upgrade())
+                    .all(|e| e.read(cx).is_stream_paused());
+            (state.config.clone(), count, state.is_picking_window, all_paused)
         };
 
         let opacity_pct = (config.hover_opacity * 100.0).round() as u32;
         let slider_ratio = ((config.hover_opacity - 0.05) / 0.95).clamp(0.0, 1.0);
-        let track_width = (win_w - 80.0).max(200.0);
+        let track_width = (win_w - 74.0).max(200.0);
         let fill_width = (track_width * slider_ratio).round();
 
         div()
@@ -80,7 +94,12 @@ impl Render for SettingsView {
             .overflow_hidden()
             .on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, _, cx| {
                 if this.is_dragging_slider {
-                    this.update_slider_from_x(f32::from(event.position.x), win_w, cx);
+                    if event.pressed_button == Some(gpui::MouseButton::Left) {
+                        this.update_slider_from_x(f32::from(event.position.x), win_w, cx);
+                    } else {
+                        this.is_dragging_slider = false;
+                        cx.notify();
+                    }
                 }
             }))
             .on_mouse_up(
@@ -133,7 +152,7 @@ impl Render for SettingsView {
                                     .child("Control Panel"),
                             ),
                     )
-                    // Frosted Glass Close Button with Bold Centered Icon
+                    // Frosted Glass Close Button with Precision Vector Canvas Icon
                     .child(
                         div()
                             .id("btn-close-settings")
@@ -159,15 +178,27 @@ impl Render for SettingsView {
                                 window.remove_window();
                             }))
                             .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .text_size(px(14.0))
-                                    .line_height(px(14.0))
-                                    .font_weight(FontWeight::EXTRA_BOLD)
-                                    .text_color(rgb(0xffffff))
-                                    .child("✕"),
+                                canvas(
+                                    |_, _, _| {},
+                                    move |bounds, _, window, _| {
+                                        let center_x = bounds.origin.x + bounds.size.width / 2.0;
+                                        let center_y = bounds.origin.y + bounds.size.height / 2.0;
+                                        let r = px(4.5);
+                                        let mut b1 = PathBuilder::stroke(px(2.2));
+                                        b1.move_to(point(center_x - r, center_y - r));
+                                        b1.line_to(point(center_x + r, center_y + r));
+                                        if let Ok(path) = b1.build() {
+                                            window.paint_path(path, rgb(0xffffff));
+                                        }
+                                        let mut b2 = PathBuilder::stroke(px(2.2));
+                                        b2.move_to(point(center_x + r, center_y - r));
+                                        b2.line_to(point(center_x - r, center_y + r));
+                                        if let Ok(path) = b2.build() {
+                                            window.paint_path(path, rgb(0xffffff));
+                                        }
+                                    },
+                                )
+                                .size(px(14.0)),
                             ),
                     ),
             )
@@ -216,6 +247,30 @@ impl Render for SettingsView {
                                     .gap_2()
                                     .when(active_mirrors > 0, |el| {
                                         el.child(
+                                            div()
+                                                .id("btn-toggle-pause-mirrors")
+                                                .px_3()
+                                                .py_1p5()
+                                                .rounded(px(8.0))
+                                                .bg(rgba(0x2d3448bf))
+                                                .border_1()
+                                                .border_color(rgba(0xffffff28))
+                                                .text_xs()
+                                                .font_weight(FontWeight::BOLD)
+                                                .text_color(rgb(0xe5e7eb))
+                                                .cursor_pointer()
+                                                .hover(|s| {
+                                                    s.bg(rgba(0x3b445ecf))
+                                                        .border_color(rgba(0xffffff55))
+                                                })
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.app_state.update(cx, |state, cx| {
+                                                        state.toggle_pause_all(cx);
+                                                    });
+                                                }))
+                                                .child(if all_paused { "Resume All" } else { "Pause All" }),
+                                        )
+                                        .child(
                                             div()
                                                 .id("btn-close-all-mirrors")
                                                 .px_3()
@@ -314,6 +369,7 @@ impl Render for SettingsView {
                                             .h(px(22.0))
                                             .flex()
                                             .items_center()
+                                            .relative()
                                             .cursor_pointer()
                                             .on_mouse_down(
                                                 gpui::MouseButton::Left,
@@ -346,6 +402,17 @@ impl Render for SettingsView {
                                                             .rounded(px(4.0))
                                                             .bg(rgb(0x10b981)),
                                                     ),
+                                            )
+                                            .child(
+                                                div()
+                                                    .absolute()
+                                                    .left(px((fill_width - 8.0).clamp(0.0, track_width - 16.0)))
+                                                    .size(px(16.0))
+                                                    .rounded_full()
+                                                    .bg(rgb(0xffffff))
+                                                    .border_2()
+                                                    .border_color(rgb(0x10b981))
+                                                    .shadow_sm(),
                                             ),
                                     ),
                             )

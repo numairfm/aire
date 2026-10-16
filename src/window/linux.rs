@@ -33,18 +33,21 @@ impl LinuxWindowManager {
                 ("skipswitcher", "true"),
                 ("skipswitcherrule", "2"),
             ] {
-                let _ = std::process::Command::new("kwriteconfig6")
-                    .args(["--file", "kwinrulesrc", "--group", &rule_id, "--key", key, val])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status();
+                for cmd in ["kwriteconfig6", "kwriteconfig5"] {
+                    if let Ok(status) = std::process::Command::new(cmd)
+                        .args(["--file", "kwinrulesrc", "--group", &rule_id, "--key", key, val])
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .status()
+                    {
+                        if status.success() {
+                            break;
+                        }
+                    }
+                }
             }
 
-            let _ = std::process::Command::new("qdbus-qt6")
-                .args(["org.kde.KWin", "/KWin", "reconfigure"])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status();
+            Self::run_qdbus(&["org.kde.KWin", "/KWin", "reconfigure"]);
 
             let script_id = format!("{}_keepabove_daemon", app_id);
             let js_code = format!(
@@ -68,32 +71,20 @@ impl LinuxWindowManager {
             let temp_path = std::env::temp_dir().join(format!("{}.js", script_id));
             if std::fs::write(&temp_path, js_code).is_ok() {
                 let path_str = temp_path.to_string_lossy().to_string();
-                let _ = std::process::Command::new("qdbus-qt6")
-                    .args([
-                        "org.kde.KWin",
-                        "/Scripting",
-                        "org.kde.kwin.Scripting.unloadScript",
-                        &script_id,
-                    ])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status();
-                let _ = std::process::Command::new("qdbus-qt6")
-                    .args([
-                        "org.kde.KWin",
-                        "/Scripting",
-                        "org.kde.kwin.Scripting.loadScript",
-                        &path_str,
-                        &script_id,
-                    ])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status();
-                let _ = std::process::Command::new("qdbus-qt6")
-                    .args(["org.kde.KWin", "/Scripting", "org.kde.kwin.Scripting.start"])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status();
+                Self::run_qdbus(&[
+                    "org.kde.KWin",
+                    "/Scripting",
+                    "org.kde.kwin.Scripting.unloadScript",
+                    &script_id,
+                ]);
+                Self::run_qdbus(&[
+                    "org.kde.KWin",
+                    "/Scripting",
+                    "org.kde.kwin.Scripting.loadScript",
+                    &path_str,
+                    &script_id,
+                ]);
+                Self::run_qdbus(&["org.kde.KWin", "/Scripting", "org.kde.kwin.Scripting.start"]);
             }
         } else {
             if enabled {
@@ -117,6 +108,33 @@ impl LinuxWindowManager {
         }
 
         Ok(())
+    }
+
+    fn run_qdbus(args: &[&str]) {
+        for cmd in ["qdbus-qt6", "qdbus6", "qdbus"] {
+            if let Ok(status) = std::process::Command::new(cmd)
+                .args(args)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+            {
+                if status.success() {
+                    break;
+                }
+            }
+        }
+    }
+
+    pub fn cleanup(app_id: &str) {
+        let script_id = format!("{}_keepabove_daemon", app_id);
+        Self::run_qdbus(&[
+            "org.kde.KWin",
+            "/Scripting",
+            "org.kde.kwin.Scripting.unloadScript",
+            &script_id,
+        ]);
+        let temp_path = std::env::temp_dir().join(format!("{}.js", script_id));
+        let _ = std::fs::remove_file(temp_path);
     }
 
     pub fn set_resize_constraint_for(

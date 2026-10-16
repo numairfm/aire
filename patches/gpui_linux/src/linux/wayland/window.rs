@@ -824,7 +824,7 @@ impl WaylandWindowStatePtr {
                 state.inset(),
                 state.tiling,
             )
-            .map(|v| f32::from(v) as i32)
+            .map(|v| f32::from(v).round() as i32)
             .map_size(|v| if v <= 0 { 1 } else { v });
 
             state.surface_state.set_geometry(
@@ -1146,8 +1146,10 @@ impl WaylandWindowStatePtr {
         {
             let state = self.state.borrow();
             if let Some(viewport) = &state.viewport {
-                viewport
-                    .set_destination(f32::from(size.width) as i32, f32::from(size.height) as i32);
+                viewport.set_destination(
+                    f32::from(size.width).round() as i32,
+                    f32::from(size.height).round() as i32,
+                );
             }
         }
     }
@@ -1343,7 +1345,7 @@ impl PlatformWindow for WaylandWindow {
             state.inset(),
             state.tiling,
         )
-        .map(|v| f32::from(v) as i32)
+        .map(|v| f32::from(v).round() as i32)
         .map_size(|v| if v <= 0 { 1 } else { v });
 
         state.surface_state.set_geometry(
