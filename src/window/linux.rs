@@ -35,11 +35,15 @@ impl LinuxWindowManager {
             ] {
                 let _ = std::process::Command::new("kwriteconfig6")
                     .args(["--file", "kwinrulesrc", "--group", &rule_id, "--key", key, val])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
                     .status();
             }
 
             let _ = std::process::Command::new("qdbus-qt6")
                 .args(["org.kde.KWin", "/KWin", "reconfigure"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
                 .status();
 
             let script_id = format!("{}_keepabove_daemon", app_id);
@@ -71,6 +75,8 @@ impl LinuxWindowManager {
                         "org.kde.kwin.Scripting.unloadScript",
                         &script_id,
                     ])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
                     .status();
                 let _ = std::process::Command::new("qdbus-qt6")
                     .args([
@@ -80,22 +86,32 @@ impl LinuxWindowManager {
                         &path_str,
                         &script_id,
                     ])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
                     .status();
                 let _ = std::process::Command::new("qdbus-qt6")
                     .args(["org.kde.KWin", "/Scripting", "org.kde.kwin.Scripting.start"])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
                     .status();
             }
         } else {
             if enabled {
                 let _ = std::process::Command::new("hyprctl")
                     .args(["keyword", "windowrulev2", &format!("pin,class:^({})$", app_id)])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
                     .status();
                 let _ = std::process::Command::new("swaymsg")
                     .args([&format!("[app_id=\"{}\"] floating enable, sticky enable", app_id)])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
                     .status();
             } else {
                 let _ = std::process::Command::new("swaymsg")
                     .args([&format!("[app_id=\"{}\"] sticky disable", app_id)])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
                     .status();
             }
         }

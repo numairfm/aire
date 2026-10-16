@@ -1,5 +1,5 @@
 use anyhow::Result;
-use ksni::{menu::StandardItem, Icon, MenuItem, Tray, TrayMethods};
+use ksni::{blocking::TrayMethods, menu::StandardItem, Icon, MenuItem, Tray};
 
 use super::{generate_tray_icon_argb32, TrayCommand};
 
@@ -10,6 +10,8 @@ struct AireTray {
 }
 
 impl Tray for AireTray {
+    const MENU_ON_ACTIVATE: bool = true;
+
     fn id(&self) -> String {
         "aire-mirror-daemon".into()
     }
@@ -100,17 +102,17 @@ impl Tray for AireTray {
 }
 
 pub struct LinuxTrayHandle {
-    handle: ksni::Handle<AireTray>,
+    handle: ksni::blocking::Handle<AireTray>,
 }
 
 impl LinuxTrayHandle {
     pub fn update_mirror_state(&self, active_count: usize, all_paused: bool) {
         let handle = self.handle.clone();
         std::thread::spawn(move || {
-            let _ = async_io::block_on(handle.update(|tray| {
+            let _ = handle.update(|tray| {
                 tray.active_count = active_count;
                 tray.all_paused = all_paused;
-            }));
+            });
         });
     }
 }
@@ -121,7 +123,8 @@ pub fn start_linux_tray(cmd_tx: async_channel::Sender<TrayCommand>) -> Result<Li
         active_count: 0,
         all_paused: false,
     };
-    let handle = async_io::block_on(tray.spawn())
+    let handle = tray
+        .spawn()
         .map_err(|e| anyhow::anyhow!("Failed to spawn StatusNotifierItem tray: {e}"))?;
     Ok(LinuxTrayHandle { handle })
 }
