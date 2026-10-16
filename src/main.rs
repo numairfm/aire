@@ -3,7 +3,6 @@ mod ui;
 mod window;
 
 use anyhow::Result;
-use crossbeam_channel::bounded;
 use gpui::{
     px, App, AppContext, Bounds, Point, Size, WindowBackgroundAppearance, WindowBounds,
     WindowDecorations, WindowKind, WindowOptions,
@@ -11,7 +10,7 @@ use gpui::{
 use gpui_platform::application;
 
 use crate::{
-    capture::{start_window_capture, CaptureEvent},
+    capture::{create_capture_channel, start_window_capture},
     ui::MirrorView,
     window::configure_platform_window,
 };
@@ -25,12 +24,16 @@ fn main() -> Result<()> {
     }
 
     // 2. Set up communication channel for capture events
-    let (event_tx, event_rx) = bounded::<CaptureEvent>(4);
+    let (event_tx, event_rx) = create_capture_channel();
 
-    // 3. Start window capture backend (pops up native KDE window picker)
-    let capture = start_window_capture(event_tx)?;
+    // 3. Start window capture backend (user picks window in native KDE portal dialog)
+    // If user cancels the picker or closes it, exit cleanly without opening any window
+    let Some(capture) = start_window_capture(event_tx)? else {
+        eprintln!("[AIRE] Window selection cancelled. Exiting.");
+        return Ok(());
+    };
 
-    // 4. Run GPUI application
+    // 4. Run GPUI application now that window is selected
     application().run(move |cx: &mut App| {
         let display_bounds = cx.displays().first().map(|d| d.bounds()).unwrap_or_else(|| {
             Bounds {

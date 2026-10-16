@@ -3,13 +3,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crossbeam_channel::Receiver;
 use gpui::{
     div, prelude::*, px, rgb, rgba, size, Context, FontWeight, Render, RenderImage,
     ResizeEdge, WeakEntity, Window,
 };
 
-use crate::capture::{CaptureEvent, WindowCapture};
+use crate::capture::{CaptureEvent, CaptureReceiver, WindowCapture};
 
 pub struct MirrorView {
     capture: Box<dyn WindowCapture>,
@@ -29,74 +28,110 @@ impl MirrorView {
     pub fn new(
         cx: &mut Context<Self>,
         capture: Box<dyn WindowCapture>,
-        event_rx: Receiver<CaptureEvent>,
+        event_rx: CaptureReceiver,
     ) -> Self {
-        // Spawn background listener for capture events
+        // Spawn background listener for capture events (100% non-blocking)
         cx.spawn(async move |this: WeakEntity<Self>, cx| {
             let mut frames_this_sec = 0;
             let mut last_fps_time = Instant::now();
+            let last_frame_instant = Arc::new(parking_lot::Mutex::new(Instant::now()));
 
-            loop {
-                match event_rx.recv_timeout(Duration::from_millis(50)) {
-                    Ok(event) => match event {
-                        CaptureEvent::Frame(frame) => {
-                            frames_this_sec += 1;
-                            let now = Instant::now();
-                            let mut current_fps = 0.0;
-                            if now.duration_since(last_fps_time) >= Duration::from_secs(1) {
-                                current_fps = frames_this_sec as f64
-                                    / now.duration_since(last_fps_time).as_secs_f64();
-                                frames_this_sec = 0;
-                                last_fps_time = now;
+            // Periodic timer task to reset FPS to 0.0 when source is static
+            let this_fps_watcher = this.clone();
+            let last_frame_instant_checker = last_frame_instant.clone();
+            let _fps_checker = cx.spawn(async move |cx| {
+                loop {
+                    cx.background_executor().timer(Duration::from_millis(500)).await;
+                    let last_seen = *last_frame_instant_checker.lock();
+                    let _ = this_fps_watcher.update(cx, |view, cx| {
+                        if view.fps > 0.0 && last_seen.elapsed() > Duration::from_millis(1500) {
+                            view.fps = 0.0;
+                            cx.notify();
+                        }
+                    });
+                }
+            });
+
+            while let Ok(event) = event_rx.recv().await {
+                match event {
+                    CaptureEvent::Frame(mut frame) => {
+                        // Drain any backlog of frames to always render the freshest frame with zero latency
+                        while let Ok(next_event) = event_rx.try_recv() {
+                            match next_event {
+                                CaptureEvent::Frame(f) => frame = f,
+                                CaptureEvent::Resized { width, height } => {
+                                    let _ = this.update(cx, |view, cx| {
+                                        view.source_width = width;
+                                        view.source_height = height;
+                                        if height > 0 {
+                                            view.aspect_ratio = width as f32 / height as f32;
+                                        }
+                                        cx.notify();
+                                    });
+                                }
+                                CaptureEvent::SourceClosed => {
+                                    let _ = this.update(cx, |view, cx| {
+                                        view.source_closed = true;
+                                        cx.notify();
+                                    });
+                                    return;
+                                }
+                                CaptureEvent::Error(msg) => {
+                                    let _ = this.update(cx, |view, cx| {
+                                        view.error_message = Some(msg);
+                                        cx.notify();
+                                    });
+                                }
                             }
+                        }
 
-                            let _ = this.update(cx, |view, cx| {
-                                view.current_image = Some(frame.render_image);
-                                view.source_width = frame.width;
-                                view.source_height = frame.height;
-                                if frame.height > 0 {
-                                    view.aspect_ratio = frame.width as f32 / frame.height as f32;
-                                }
-                                if current_fps > 0.0 {
-                                    view.fps = current_fps;
-                                }
-                                cx.notify();
-                            });
+                        frames_this_sec += 1;
+                        *last_frame_instant.lock() = Instant::now();
+                        let now = Instant::now();
+                        let mut new_fps = None;
+                        if now.duration_since(last_fps_time) >= Duration::from_secs(1) {
+                            let fps = frames_this_sec as f64
+                                / now.duration_since(last_fps_time).as_secs_f64();
+                            new_fps = Some(fps);
+                            frames_this_sec = 0;
+                            last_fps_time = now;
                         }
-                        CaptureEvent::Resized { width, height } => {
-                            let _ = this.update(cx, |view, cx| {
-                                view.source_width = width;
-                                view.source_height = height;
-                                if height > 0 {
-                                    view.aspect_ratio = width as f32 / height as f32;
-                                }
-                                cx.notify();
-                            });
-                        }
-                        CaptureEvent::SourceClosed => {
-                            let _ = this.update(cx, |view, cx| {
-                                view.source_closed = true;
-                                cx.notify();
-                            });
-                            break;
-                        }
-                        CaptureEvent::Error(msg) => {
-                            let _ = this.update(cx, |view, cx| {
-                                view.error_message = Some(msg);
-                                cx.notify();
-                            });
-                        }
-                    },
-                    Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
-                        // Yield to executor when no new frames are coming in (adaptive)
-                        cx.background_executor().timer(Duration::from_millis(16)).await;
+
+                        let _ = this.update(cx, |view, cx| {
+                            view.current_image = Some(frame.render_image);
+                            view.source_width = frame.width;
+                            view.source_height = frame.height;
+                            if frame.height > 0 {
+                                view.aspect_ratio = frame.width as f32 / frame.height as f32;
+                            }
+                            if let Some(fps) = new_fps {
+                                view.fps = fps;
+                            }
+                            cx.notify();
+                        });
                     }
-                    Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                    CaptureEvent::Resized { width, height } => {
+                        let _ = this.update(cx, |view, cx| {
+                            view.source_width = width;
+                            view.source_height = height;
+                            if height > 0 {
+                                view.aspect_ratio = width as f32 / height as f32;
+                            }
+                            cx.notify();
+                        });
+                    }
+                    CaptureEvent::SourceClosed => {
                         let _ = this.update(cx, |view, cx| {
                             view.source_closed = true;
                             cx.notify();
                         });
                         break;
+                    }
+                    CaptureEvent::Error(msg) => {
+                        let _ = this.update(cx, |view, cx| {
+                            view.error_message = Some(msg);
+                            cx.notify();
+                        });
                     }
                 }
             }
@@ -134,33 +169,25 @@ impl Render for MirrorView {
                 .size_full()
                 .flex()
                 .items_center()
-                .justify_center()
+                .justify_between()
+                .px_2()
                 // Light frosty pill glass style
                 .bg(rgba(0xffffffea))
                 .rounded(px(18.0))
                 .border_1()
                 .border_color(rgba(0xffffffbb))
                 .shadow_lg()
-                .cursor_pointer()
-                .on_mouse_down(gpui::MouseButton::Left, |_, window, _| {
-                    window.start_window_move();
-                })
-                .id("restore-pill")
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.is_minimized = false;
-                    this.capture.resume();
-                    window.resize(size(
-                        px(this.last_window_width.max(240.0)),
-                        px(this.last_window_height.max(135.0)),
-                    ));
-                    cx.notify();
-                }))
+                // Left side: Drag handle to move the pill
                 .child(
                     div()
                         .flex()
                         .items_center()
-                        .gap_2()
-                        .px_3()
+                        .gap_1p5()
+                        .cursor_grab()
+                        .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
+                            cx.stop_propagation();
+                            window.start_window_move();
+                        })
                         .child(
                             div()
                                 .size(px(8.0))
@@ -170,9 +197,44 @@ impl Render for MirrorView {
                         .child(
                             div()
                                 .text_xs()
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(rgb(0x1f2937))
-                                .child("aire • click to restore"),
+                                .font_weight(FontWeight::BOLD)
+                                .text_color(rgb(0x374151))
+                                .child("aire"),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(0x9ca3af))
+                                .child("⋮"),
+                        ),
+                )
+                // Right side: Click to restore
+                .child(
+                    div()
+                        .id("restore-pill-action")
+                        .flex_1()
+                        .flex()
+                        .justify_end()
+                        .cursor_pointer()
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                            cx.stop_propagation();
+                        })
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.is_minimized = false;
+                            this.capture.resume();
+                            window.resize(size(
+                                px(this.last_window_width.max(240.0)),
+                                px(this.last_window_height.max(135.0)),
+                            ));
+                            cx.notify();
+                        }))
+                        .child(
+                            div()
+                                .text_xs()
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(rgb(0x4b5563))
+                                .hover(|s| s.text_color(rgb(0x111827)))
+                                .child("restore ↗"),
                         ),
                 )
                 .into_any_element();
@@ -224,6 +286,9 @@ impl Render for MirrorView {
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(rgb(0x111827))
                         .cursor_pointer()
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                            cx.stop_propagation();
+                        })
                         .on_click(|_, _, cx| {
                             cx.quit();
                         })
@@ -278,6 +343,9 @@ impl Render for MirrorView {
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(rgb(0x111827))
                         .cursor_pointer()
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                            cx.stop_propagation();
+                        })
                         .on_click(|_, _, cx| {
                             cx.quit();
                         })
@@ -287,8 +355,10 @@ impl Render for MirrorView {
         }
 
         // 4. Normal Active Mirror HUD
+        // Instant, responsive hover state directly linked to compositor pointer enter/leave
+        let is_hovered = window.is_window_hovered();
+
         div()
-            .group("hud")
             .size_full()
             .relative()
             // Frosty light glass styling
@@ -298,16 +368,15 @@ impl Render for MirrorView {
             .border_color(rgba(0xffffff50))
             .shadow_xl()
             .overflow_hidden()
-            // Click-drag anywhere to move window
+            // Click-drag anywhere on the mirror to move the window
             .on_mouse_down(gpui::MouseButton::Left, |_, window, _| {
                 window.start_window_move();
             })
-            // Video / Mirror Content Layer (eases to 35% opacity on hover)
+            // Video / Mirror Content Layer (instantly fades to 35% opacity on hover)
             .child(
                 div()
                     .size_full()
-                    .opacity(1.0)
-                    .group_hover("hud", |s| s.opacity(0.35))
+                    .opacity(if is_hovered { 0.35 } else { 1.0 })
                     .child(if let Some(ref img_data) = self.current_image {
                         gpui::img(img_data.clone())
                             .size_full()
@@ -330,7 +399,134 @@ impl Render for MirrorView {
                             .into_any_element()
                     }),
             )
-            // Frosty Glass Controls Overlay (Fades in on hover)
+            // Resize handles on borders (Placed underneath controls overlay)
+            // Left edge
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .bottom_0()
+                    .left_0()
+                    .w(px(6.0))
+                    .cursor_col_resize()
+                    .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
+                        cx.stop_propagation();
+                        window.start_window_resize(ResizeEdge::Left);
+                    }),
+            )
+            // Right edge
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .bottom_0()
+                    .right_0()
+                    .w(px(6.0))
+                    .cursor_col_resize()
+                    .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
+                        cx.stop_propagation();
+                        window.start_window_resize(ResizeEdge::Right);
+                    }),
+            )
+            // Top edge
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .right_0()
+                    .h(px(6.0))
+                    .cursor_row_resize()
+                    .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
+                        cx.stop_propagation();
+                        window.start_window_resize(ResizeEdge::Top);
+                    }),
+            )
+            // Bottom edge
+            .child(
+                div()
+                    .absolute()
+                    .bottom_0()
+                    .left_0()
+                    .right_0()
+                    .h(px(6.0))
+                    .cursor_row_resize()
+                    .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
+                        cx.stop_propagation();
+                        window.start_window_resize(ResizeEdge::Bottom);
+                    }),
+            )
+            // Bottom-right corner
+            .child(
+                div()
+                    .absolute()
+                    .bottom_0()
+                    .right_0()
+                    .size(px(14.0))
+                    .cursor_nwse_resize()
+                    .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
+                        cx.stop_propagation();
+                        window.start_window_resize(ResizeEdge::BottomRight);
+                    }),
+            )
+            // Bottom-left corner
+            .child(
+                div()
+                    .absolute()
+                    .bottom_0()
+                    .left_0()
+                    .size(px(14.0))
+                    .cursor_nesw_resize()
+                    .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
+                        cx.stop_propagation();
+                        window.start_window_resize(ResizeEdge::BottomLeft);
+                    }),
+            )
+            // Top-left corner
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size(px(14.0))
+                    .cursor_nwse_resize()
+                    .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
+                        cx.stop_propagation();
+                        window.start_window_resize(ResizeEdge::TopLeft);
+                    }),
+            )
+            // Top-right corner
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .right_0()
+                    .size(px(14.0))
+                    .cursor_nesw_resize()
+                    .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
+                        cx.stop_propagation();
+                        window.start_window_resize(ResizeEdge::TopRight);
+                    }),
+            )
+            // Subtle stream metadata badge (Bottom-left)
+            .child(
+                div()
+                    .absolute()
+                    .bottom_2()
+                    .left_2()
+                    .px_2()
+                    .py_1()
+                    .rounded(px(6.0))
+                    .bg(rgba(0x00000088))
+                    .text_xs()
+                    .text_color(rgb(0xf3f4f6))
+                    .opacity(if is_hovered { 0.95 } else { 0.5 })
+                    .child(format!(
+                        "{}×{} • {:.0} fps",
+                        self.source_width, self.source_height, self.fps
+                    )),
+            )
+            // Frosty Glass Controls Overlay (Placed ON TOP of resize handles and video)
             .child(
                 div()
                     .absolute()
@@ -339,8 +535,7 @@ impl Render for MirrorView {
                     .flex()
                     .items_center()
                     .gap_1p5()
-                    .opacity(0.0)
-                    .group_hover("hud", |s| s.opacity(1.0))
+                    .opacity(if is_hovered { 1.0 } else { 0.0 })
                     // Minimize button
                     .child(
                         div()
@@ -355,6 +550,11 @@ impl Render for MirrorView {
                             .border_color(rgba(0x00000018))
                             .shadow_sm()
                             .cursor_pointer()
+                            .hover(|s| s.bg(rgba(0xffffffff)).shadow_md())
+                            // Stop propagation so parent's start_window_move() doesn't intercept the click
+                            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                                cx.stop_propagation();
+                            })
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.is_minimized = true;
                                 this.capture.pause();
@@ -382,6 +582,11 @@ impl Render for MirrorView {
                             .border_color(rgba(0x00000018))
                             .shadow_sm()
                             .cursor_pointer()
+                            .hover(|s| s.bg(rgba(0xfff1f2fa)).border_color(rgba(0xe11d4840)))
+                            // Stop propagation so parent's start_window_move() doesn't intercept the click
+                            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                                cx.stop_propagation();
+                            })
                             .on_click(|_, _, cx| {
                                 cx.quit();
                             })
@@ -393,126 +598,6 @@ impl Render for MirrorView {
                                     .child("✕"),
                             ),
                     ),
-            )
-            // Subtle stream metadata badge (Bottom-left)
-            .child(
-                div()
-                    .absolute()
-                    .bottom_2()
-                    .left_2()
-                    .px_2()
-                    .py_1()
-                    .rounded(px(6.0))
-                    .bg(rgba(0x00000088))
-                    .text_xs()
-                    .text_color(rgb(0xf3f4f6))
-                    .opacity(0.5)
-                    .group_hover("hud", |s| s.opacity(0.95))
-                    .child(format!(
-                        "{}×{} • {:.0} fps",
-                        self.source_width, self.source_height, self.fps
-                    )),
-            )
-            // Resize handles on borders
-            // Left edge
-            .child(
-                div()
-                    .absolute()
-                    .top_0()
-                    .bottom_0()
-                    .left_0()
-                    .w(px(6.0))
-                    .cursor_col_resize()
-                    .on_mouse_down(gpui::MouseButton::Left, |_, window, _| {
-                        window.start_window_resize(ResizeEdge::Left);
-                    }),
-            )
-            // Right edge
-            .child(
-                div()
-                    .absolute()
-                    .top_0()
-                    .bottom_0()
-                    .right_0()
-                    .w(px(6.0))
-                    .cursor_col_resize()
-                    .on_mouse_down(gpui::MouseButton::Left, |_, window, _| {
-                        window.start_window_resize(ResizeEdge::Right);
-                    }),
-            )
-            // Top edge
-            .child(
-                div()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .right_0()
-                    .h(px(6.0))
-                    .cursor_row_resize()
-                    .on_mouse_down(gpui::MouseButton::Left, |_, window, _| {
-                        window.start_window_resize(ResizeEdge::Top);
-                    }),
-            )
-            // Bottom edge
-            .child(
-                div()
-                    .absolute()
-                    .bottom_0()
-                    .left_0()
-                    .right_0()
-                    .h(px(6.0))
-                    .cursor_row_resize()
-                    .on_mouse_down(gpui::MouseButton::Left, |_, window, _| {
-                        window.start_window_resize(ResizeEdge::Bottom);
-                    }),
-            )
-            // Bottom-right corner
-            .child(
-                div()
-                    .absolute()
-                    .bottom_0()
-                    .right_0()
-                    .size(px(14.0))
-                    .cursor_nwse_resize()
-                    .on_mouse_down(gpui::MouseButton::Left, |_, window, _| {
-                        window.start_window_resize(ResizeEdge::BottomRight);
-                    }),
-            )
-            // Bottom-left corner
-            .child(
-                div()
-                    .absolute()
-                    .bottom_0()
-                    .left_0()
-                    .size(px(14.0))
-                    .cursor_nesw_resize()
-                    .on_mouse_down(gpui::MouseButton::Left, |_, window, _| {
-                        window.start_window_resize(ResizeEdge::BottomLeft);
-                    }),
-            )
-            // Top-right corner
-            .child(
-                div()
-                    .absolute()
-                    .top_0()
-                    .right_0()
-                    .size(px(14.0))
-                    .cursor_nesw_resize()
-                    .on_mouse_down(gpui::MouseButton::Left, |_, window, _| {
-                        window.start_window_resize(ResizeEdge::TopRight);
-                    }),
-            )
-            // Top-left corner
-            .child(
-                div()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .size(px(14.0))
-                    .cursor_nwse_resize()
-                    .on_mouse_down(gpui::MouseButton::Left, |_, window, _| {
-                        window.start_window_resize(ResizeEdge::TopLeft);
-                    }),
             )
             .into_any_element()
     }

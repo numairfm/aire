@@ -12,21 +12,64 @@ use ashpd::{
     desktop::screencast::{CursorMode, Screencast, SelectSourcesOptions, SourceType, StartCastOptions},
     enumflags2::BitFlags,
 };
-use crossbeam_channel::Sender;
 use image::{Frame, ImageBuffer};
 use pipewire as pw;
 use pw::{properties::properties, spa};
 use smallvec::smallvec;
 use spa::pod::Pod;
 
-use super::{CapturedFrame, CaptureEvent, WindowCapture};
+use super::{CaptureEvent, CaptureSender, CapturedFrame, WindowCapture};
 
 pub struct LinuxWindowCapture {
     is_paused: Arc<AtomicBool>,
 }
 
 impl LinuxWindowCapture {
-    pub fn start(event_tx: Sender<CaptureEvent>) -> Result<Box<dyn WindowCapture>> {
+    pub fn start(event_tx: CaptureSender) -> Result<Option<Box<dyn WindowCapture>>> {
+        eprintln!("[PORTAL] Requesting window selection from XDG Desktop Portal...");
+        let portal_res = async_io::block_on(async {
+            let proxy = Screencast::new().await.context("Failed to connect to ScreenCast portal")?;
+            let session = proxy.create_session(Default::default()).await.context("Failed to create screencast session")?;
+
+            let options = SelectSourcesOptions::default()
+                .set_cursor_mode(CursorMode::Metadata)
+                .set_sources(BitFlags::from_flag(SourceType::Window))
+                .set_multiple(false);
+
+            proxy.select_sources(&session, options).await.context("SelectSources failed")?;
+
+            let request = proxy.start(&session, None, StartCastOptions::default()).await?;
+            let response = match request.response() {
+                Ok(resp) => resp,
+                Err(err) => {
+                    eprintln!("[PORTAL] Portal dialog was cancelled: {:?}", err);
+                    return Ok(None);
+                }
+            };
+
+            let streams = response.streams().to_vec();
+            let stream = match streams.first() {
+                Some(s) => s,
+                None => {
+                    eprintln!("[PORTAL] No window stream returned.");
+                    return Ok(None);
+                }
+            };
+            let node_id = stream.pipe_wire_node_id();
+            let pw_fd = proxy.open_pipe_wire_remote(&session, Default::default()).await.ok();
+            Ok::<Option<(u32, Option<OwnedFd>)>, anyhow::Error>(Some((node_id, pw_fd)))
+        });
+
+        let (node_id, pw_fd) = match portal_res {
+            Ok(Some(data)) => data,
+            Ok(None) => return Ok(None),
+            Err(err) => {
+                eprintln!("[PORTAL] Portal error: {:#}", err);
+                return Ok(None);
+            }
+        };
+
+        eprintln!("[PIPEWIRE] Selected window stream node ID: {}", node_id);
         let is_paused = Arc::new(AtomicBool::new(false));
         let is_running = Arc::new(AtomicBool::new(true));
 
@@ -34,42 +77,14 @@ impl LinuxWindowCapture {
         let tx = event_tx.clone();
 
         thread::spawn(move || {
-            let session_res = async_io::block_on(async {
-                let proxy = Screencast::new().await.context("Failed to connect to ScreenCast portal")?;
-                let session = proxy.create_session(Default::default()).await.context("Failed to create screencast session")?;
-
-                let options = SelectSourcesOptions::default()
-                    .set_cursor_mode(CursorMode::Metadata)
-                    .set_sources(BitFlags::from_flag(SourceType::Window))
-                    .set_multiple(false);
-
-                proxy.select_sources(&session, options).await.context("SelectSources failed")?;
-
-                let request = proxy.start(&session, None, StartCastOptions::default()).await?;
-                let streams = request.response()?.streams().to_vec();
-                let stream = streams.first().context("No window selected")?;
-                let node_id = stream.pipe_wire_node_id();
-
-                let pw_fd = proxy.open_pipe_wire_remote(&session, Default::default()).await.ok();
-                Ok::<(u32, Option<OwnedFd>), anyhow::Error>((node_id, pw_fd))
-            });
-
-            let (node_id, pw_fd) = match session_res {
-                Ok(data) => data,
-                Err(err) => {
-                    let _ = tx.send(CaptureEvent::Error(format!("Picker error: {}", err)));
-                    return;
-                }
-            };
-
             if let Err(err) = run_pipewire_loop(node_id, pw_fd, tx.clone(), is_paused_clone, is_running) {
-                let _ = tx.send(CaptureEvent::Error(format!("PipeWire stream error: {}", err)));
+                let _ = tx.try_send(CaptureEvent::Error(format!("PipeWire stream error: {}", err)));
             }
         });
 
-        Ok(Box::new(LinuxWindowCapture {
+        Ok(Some(Box::new(LinuxWindowCapture {
             is_paused,
-        }))
+        })))
     }
 }
 
@@ -85,7 +100,7 @@ impl WindowCapture for LinuxWindowCapture {
 
 struct StreamContext {
     format: spa::param::video::VideoInfoRaw,
-    event_tx: Sender<CaptureEvent>,
+    event_tx: CaptureSender,
     is_paused: Arc<AtomicBool>,
     is_running: Arc<AtomicBool>,
     last_width: u32,
@@ -95,7 +110,7 @@ struct StreamContext {
 fn run_pipewire_loop(
     node_id: u32,
     stream_fd: Option<OwnedFd>,
-    event_tx: Sender<CaptureEvent>,
+    event_tx: CaptureSender,
     is_paused: Arc<AtomicBool>,
     is_running: Arc<AtomicBool>,
 ) -> Result<()> {
@@ -134,7 +149,7 @@ fn run_pipewire_loop(
         .state_changed(|_, ctx, old, new| {
             eprintln!("[PIPEWIRE] State changed: {:?} -> {:?}", old, new);
             if matches!(new, pw::stream::StreamState::Unconnected | pw::stream::StreamState::Error(_)) {
-                let _ = ctx.event_tx.send(CaptureEvent::SourceClosed);
+                let _ = ctx.event_tx.try_send(CaptureEvent::SourceClosed);
             }
         })
         .param_changed(|_, ctx, id, param| {
@@ -159,7 +174,7 @@ fn run_pipewire_loop(
                 if size.width != ctx.last_width || size.height != ctx.last_height {
                     ctx.last_width = size.width;
                     ctx.last_height = size.height;
-                    let _ = ctx.event_tx.send(CaptureEvent::Resized {
+                    let _ = ctx.event_tx.try_send(CaptureEvent::Resized {
                         width: size.width,
                         height: size.height,
                     });

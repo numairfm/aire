@@ -1,6 +1,5 @@
 use std::sync::Arc;
 use anyhow::Result;
-use crossbeam_channel::Sender;
 use gpui::RenderImage;
 
 #[derive(Clone)]
@@ -18,6 +17,13 @@ pub enum CaptureEvent {
     Error(String),
 }
 
+pub type CaptureSender = async_channel::Sender<CaptureEvent>;
+pub type CaptureReceiver = async_channel::Receiver<CaptureEvent>;
+
+pub fn create_capture_channel() -> (CaptureSender, CaptureReceiver) {
+    async_channel::bounded::<CaptureEvent>(2)
+}
+
 pub trait WindowCapture: Send + Sync {
     fn pause(&self);
     fn resume(&self);
@@ -26,7 +32,7 @@ pub trait WindowCapture: Send + Sync {
 #[cfg(target_os = "linux")]
 pub mod linux;
 
-pub fn start_window_capture(event_tx: Sender<CaptureEvent>) -> Result<Box<dyn WindowCapture>> {
+pub fn start_window_capture(event_tx: CaptureSender) -> Result<Option<Box<dyn WindowCapture>>> {
     #[cfg(target_os = "linux")]
     {
         linux::LinuxWindowCapture::start(event_tx)
