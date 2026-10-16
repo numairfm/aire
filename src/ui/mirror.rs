@@ -490,8 +490,7 @@ impl Render for MirrorView {
             .id("mirror-root")
             .size_full()
             .relative()
-            // White frosty glass / ceramic clay border & glass HUD
-            .bg(rgba(0xffffff28))
+            // White frosty glass / ceramic clay border
             .rounded(px(14.0))
             .border_4()
             .border_color(rgba(0xffffffea))
@@ -548,11 +547,10 @@ impl Render for MirrorView {
                     window.resize(size(px(target_w), px(target_h)));
                 }
             }))
-            // Video / Mirror Content Layer (fills 100% of the window since window is always at exact aspect ratio)
+            // Video / Mirror Content Layer (100% 1:1 original colors)
             .child(
                 div()
                     .size_full()
-                    .opacity(if is_hovered { 0.35 } else { 1.0 })
                     .child(if let Some(ref img_data) = self.current_image {
                         gpui::img(img_data.clone())
                             .size_full()
@@ -574,15 +572,6 @@ impl Render for MirrorView {
                             )
                             .into_any_element()
                     }),
-            )
-            // Frosty glass / clay inner inset depth highlight
-            .child(
-                div()
-                    .absolute()
-                    .inset_0()
-                    .rounded(px(10.0))
-                    .border_1()
-                    .border_color(rgba(0xffffff60))
             )
             // Native compositor resize handles on all borders and corners (tracks globally without boundary detachment)
             // Left edge

@@ -250,24 +250,37 @@ fn run_pipewire_loop(
             }
 
             let raw_bytes = &slice[..chunk_size];
-            let is_bgr = match ctx.format.format() {
-                spa::param::video::VideoFormat::BGRx | spa::param::video::VideoFormat::BGRA => true,
-                _ => false,
-            };
+            let video_fmt = ctx.format.format();
 
-            let mut rgba_buf = vec![0u8; needed_bytes];
-            if is_bgr {
-                for i in (0..needed_bytes).step_by(4) {
-                    rgba_buf[i] = raw_bytes[i + 2];     // R
-                    rgba_buf[i + 1] = raw_bytes[i + 1]; // G
-                    rgba_buf[i + 2] = raw_bytes[i];     // B
-                    rgba_buf[i + 3] = 255;              // A
+            // GPUI's WGPU atlas texture expects BGRA8 data.
+            let mut bgra_buf = vec![0u8; needed_bytes];
+            match video_fmt {
+                spa::param::video::VideoFormat::BGRx | spa::param::video::VideoFormat::BGRA => {
+                    // Source is already BGR(x/A), copy directly and ensure alpha is opaque
+                    bgra_buf[..needed_bytes].copy_from_slice(&raw_bytes[..needed_bytes]);
+                    for i in (0..needed_bytes).step_by(4) {
+                        bgra_buf[i + 3] = 255;
+                    }
                 }
-            } else {
-                rgba_buf.copy_from_slice(&raw_bytes[..needed_bytes]);
+                spa::param::video::VideoFormat::RGBA | spa::param::video::VideoFormat::RGBx => {
+                    // Source is RGB(A/x), convert to BGRA by swapping R (index 0) and B (index 2)
+                    for i in (0..needed_bytes).step_by(4) {
+                        bgra_buf[i] = raw_bytes[i + 2];     // B
+                        bgra_buf[i + 1] = raw_bytes[i + 1]; // G
+                        bgra_buf[i + 2] = raw_bytes[i];     // R
+                        bgra_buf[i + 3] = 255;              // A
+                    }
+                }
+                _other => {
+                    // Default fallback to direct copy with opaque alpha
+                    bgra_buf[..needed_bytes].copy_from_slice(&raw_bytes[..needed_bytes]);
+                    for i in (0..needed_bytes).step_by(4) {
+                        bgra_buf[i + 3] = 255;
+                    }
+                }
             }
 
-            if let Some(img_buffer) = ImageBuffer::from_raw(width, height, rgba_buf) {
+            if let Some(img_buffer) = ImageBuffer::from_raw(width, height, bgra_buf) {
                 let render_image = Arc::new(gpui::RenderImage::new(smallvec![Frame::new(img_buffer)]));
                 let _ = ctx.event_tx.try_send(CaptureEvent::Frame(CapturedFrame {
                     width,
