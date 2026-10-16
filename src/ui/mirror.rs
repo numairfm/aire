@@ -4,8 +4,8 @@ use std::{
 };
 
 use gpui::{
-    canvas, div, point, prelude::*, px, rgb, size, Context, Entity, FontWeight, PathBuilder,
-    Render, RenderImage, ResizeEdge, ScrollWheelEvent, Task, WeakEntity, Window,
+    canvas, div, point, prelude::*, px, rgb, rgba, size, Context, Entity, FontWeight, PathBuilder,
+    Render, RenderImage, ResizeEdge, Rgba, ScrollWheelEvent, Task, WeakEntity, Window,
 };
 
 use crate::{
@@ -451,7 +451,7 @@ impl Render for MirrorView {
             }
         }
 
-        // 2. Minimized Pill State (Opaque Black + Monochrome Dark Border)
+        // 2. Minimized Pill State (Opaque Black + Crisp White Frosty Border)
         if self.is_minimized {
             return div()
                 .size_full()
@@ -462,7 +462,7 @@ impl Render for MirrorView {
                 .bg(rgb(0x000000))
                 .rounded(px(18.0))
                 .border_3()
-                .border_color(rgb(0x262626))
+                .border_color(rgba(0xffffffea))
                 .overflow_hidden()
                 .child(
                     div()
@@ -552,7 +552,7 @@ impl Render for MirrorView {
                 .into_any_element();
         }
 
-        // 3. Source Window Closed State (Opaque Black + Monochrome Border)
+        // 3. Source Window Closed State (Opaque Black + Crisp White Frosty Border)
         if self.source_closed {
             return div()
                 .size_full()
@@ -560,7 +560,7 @@ impl Render for MirrorView {
                 .bg(rgb(0x000000))
                 .rounded(px(14.0))
                 .border_4()
-                .border_color(rgb(0x222222))
+                .border_color(rgba(0xffffffea))
                 .overflow_hidden()
                 .flex()
                 .flex_col()
@@ -636,7 +636,7 @@ impl Render for MirrorView {
                 .into_any_element();
         }
 
-        // 4. Error State (Opaque Black + Monochrome Border)
+        // 4. Error State (Opaque Black + Crisp White Frosty Border)
         if let Some(ref err) = self.error_message {
             return div()
                 .size_full()
@@ -644,7 +644,7 @@ impl Render for MirrorView {
                 .bg(rgb(0x000000))
                 .rounded(px(14.0))
                 .border_4()
-                .border_color(rgb(0x222222))
+                .border_color(rgba(0xffffffea))
                 .overflow_hidden()
                 .flex()
                 .flex_col()
@@ -756,6 +756,13 @@ impl Render for MirrorView {
         let stream_opacity =
             1.0 - self.current_hover_t * (1.0 - config.hover_opacity.clamp(0.05, 1.0));
         let hud_opacity = self.current_hover_t;
+        let border_alpha = stream_opacity * 0.92;
+        let border_color = Rgba {
+            r: 1.0,
+            g: 1.0,
+            b: 1.0,
+            a: border_alpha,
+        };
 
         // Note: No outer box-shadow on the root full-surface div so KWin Wayland never leaves
         // bottom-border shadow bleed trails when moving the window across the desktop.
@@ -763,10 +770,15 @@ impl Render for MirrorView {
             .id("mirror-root")
             .size_full()
             .relative()
-            .bg(rgb(0x000000))
+            .bg(Rgba {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: stream_opacity * 0.25,
+            })
             .rounded(px(14.0))
             .border_4()
-            .border_color(rgb(0x222222))
+            .border_color(border_color)
             .overflow_hidden()
             .on_mouse_down(gpui::MouseButton::Left, |_, window, _| {
                 window.start_window_move();

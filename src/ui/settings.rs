@@ -1,5 +1,5 @@
 use gpui::{
-    canvas, div, point, prelude::*, px, rgb, Context, Entity, FontWeight, MouseDownEvent,
+    canvas, div, point, prelude::*, px, rgb, rgba, Context, Entity, FontWeight, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, PathBuilder, Render, Window,
 };
 
@@ -88,7 +88,7 @@ impl Render for SettingsView {
             .bg(rgb(0x000000))
             .rounded(px(16.0))
             .border_2()
-            .border_color(rgb(0x262626))
+            .border_color(rgba(0xffffffea))
             .flex()
             .flex_col()
             .overflow_hidden()
