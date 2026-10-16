@@ -28,12 +28,10 @@ impl SettingsView {
     }
 
     fn update_slider_from_x(&mut self, mouse_x: f32, window_width: f32, cx: &mut Context<Self>) {
-        // Slider track horizontal bounds inside the 460px settings window (padding 24px + card padding 16px = 40px each side)
         let track_left = 40.0f32;
         let track_right = (window_width - 40.0).max(track_left + 100.0);
         let t = ((mouse_x - track_left) / (track_right - track_left)).clamp(0.0, 1.0);
         let opacity = (0.05 + t * 0.95).clamp(0.05, 1.0);
-        // Round to nearest 1%
         let rounded = (opacity * 100.0).round() / 100.0;
 
         self.app_state.update(cx, |state, cx| {
@@ -47,7 +45,12 @@ impl SettingsView {
 impl Render for SettingsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let win_id = window.window_handle().window_id().as_u64();
-        set_window_resize_constraint_for(Some(win_id), None, Some((460.0, 560.0)), Some((460.0, 560.0)));
+        set_window_resize_constraint_for(
+            Some(win_id),
+            None,
+            Some((460.0, 560.0)),
+            Some((460.0, 560.0)),
+        );
 
         let win_w = f32::from(window.bounds().size.width).max(460.0);
         let (config, active_mirrors, is_picking) = {
@@ -68,11 +71,10 @@ impl Render for SettingsView {
         div()
             .id("settings-root")
             .size_full()
-            .bg(rgba(0xf8fafcf5))
+            .bg(rgba(0x0d0f14f4))
             .rounded(px(16.0))
-            .border_4()
-            .border_color(rgba(0xffffffea))
-            .shadow_xl()
+            .border_2()
+            .border_color(rgba(0xffffff2e))
             .flex()
             .flex_col()
             .overflow_hidden()
@@ -90,15 +92,15 @@ impl Render for SettingsView {
                     }
                 }),
             )
-            // Top Draggable Title Header
+            // Top Draggable Dark Frosted Header
             .child(
                 div()
                     .w_full()
                     .px_5()
                     .py_3p5()
-                    .bg(rgba(0xffffffc8))
+                    .bg(rgba(0x161922e6))
                     .border_b_1()
-                    .border_color(rgba(0x00000010))
+                    .border_color(rgba(0xffffff18))
                     .flex()
                     .items_center()
                     .justify_between()
@@ -120,30 +122,32 @@ impl Render for SettingsView {
                             .child(
                                 div()
                                     .text_sm()
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(rgb(0x111827))
+                                    .font_weight(FontWeight::EXTRA_BOLD)
+                                    .text_color(rgb(0xf9fafb))
                                     .child("aire"),
                             )
                             .child(
                                 div()
                                     .text_xs()
-                                    .text_color(rgb(0x6b7280))
+                                    .text_color(rgb(0x9ca3af))
                                     .child("Control Panel"),
                             ),
                     )
+                    // Frosted Glass Close Button with Bold Centered Icon
                     .child(
                         div()
                             .id("btn-close-settings")
                             .flex()
                             .items_center()
                             .justify_center()
-                            .size(px(26.0))
-                            .rounded(px(13.0))
-                            .bg(rgba(0xf3f4f6ff))
+                            .size(px(30.0))
+                            .rounded(px(15.0))
+                            .bg(rgba(0x252a3abf))
                             .border_1()
-                            .border_color(rgba(0x00000014))
+                            .border_color(rgba(0xffffff45))
+                            .shadow_sm()
                             .cursor_pointer()
-                            .hover(|s| s.bg(rgba(0xffe4e6ff)).border_color(rgba(0xe11d4840)))
+                            .hover(|s| s.bg(rgba(0xe11d48d9)).border_color(rgba(0xffb4c4aa)))
                             .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                                 cx.stop_propagation();
                             })
@@ -156,9 +160,13 @@ impl Render for SettingsView {
                             }))
                             .child(
                                 div()
-                                    .text_xs()
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(rgb(0x374151))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .text_size(px(14.0))
+                                    .line_height(px(14.0))
+                                    .font_weight(FontWeight::EXTRA_BOLD)
+                                    .text_color(rgb(0xffffff))
                                     .child("✕"),
                             ),
                     ),
@@ -172,14 +180,14 @@ impl Render for SettingsView {
                     .flex()
                     .flex_col()
                     .gap_3p5()
-                    // 1. Stream Actions Bar
+                    // 1. Stream Actions Card
                     .child(
                         div()
-                            .p_3()
+                            .p_3p5()
                             .rounded(px(12.0))
-                            .bg(rgba(0xffffffd8))
+                            .bg(rgba(0x181c26e6))
                             .border_1()
-                            .border_color(rgba(0x00000010))
+                            .border_color(rgba(0xffffff1a))
                             .flex()
                             .items_center()
                             .justify_between()
@@ -191,13 +199,13 @@ impl Render for SettingsView {
                                         div()
                                             .text_xs()
                                             .font_weight(FontWeight::BOLD)
-                                            .text_color(rgb(0x111827))
+                                            .text_color(rgb(0xf9fafb))
                                             .child("Floating Window Mirrors"),
                                     )
                                     .child(
                                         div()
                                             .text_xs()
-                                            .text_color(rgb(0x6b7280))
+                                            .text_color(rgb(0x9ca3af))
                                             .child(format!("{} active stream(s)", active_mirrors)),
                                     ),
                             )
@@ -210,15 +218,20 @@ impl Render for SettingsView {
                                         el.child(
                                             div()
                                                 .id("btn-close-all-mirrors")
-                                                .px_2p5()
+                                                .px_3()
                                                 .py_1p5()
                                                 .rounded(px(8.0))
-                                                .bg(rgba(0xfee2e2ff))
+                                                .bg(rgba(0x7f1d1d99))
+                                                .border_1()
+                                                .border_color(rgba(0xf8717155))
                                                 .text_xs()
-                                                .font_weight(FontWeight::SEMIBOLD)
-                                                .text_color(rgb(0x991b1b))
+                                                .font_weight(FontWeight::BOLD)
+                                                .text_color(rgb(0xfca5a5))
                                                 .cursor_pointer()
-                                                .hover(|s| s.bg(rgba(0xfecacaff)))
+                                                .hover(|s| {
+                                                    s.bg(rgba(0x991b1bcc))
+                                                        .border_color(rgba(0xf87171aa))
+                                                })
                                                 .on_click(cx.listener(|this, _, _, cx| {
                                                     this.app_state.update(cx, |state, cx| {
                                                         state.close_all_mirrors(cx);
@@ -230,19 +243,21 @@ impl Render for SettingsView {
                                     .child(
                                         div()
                                             .id("btn-spawn-mirror")
-                                            .px_3()
+                                            .px_3p5()
                                             .py_1p5()
                                             .rounded(px(8.0))
                                             .bg(if is_picking {
-                                                rgb(0x6ee7b7)
+                                                rgb(0x34d399)
                                             } else {
                                                 rgb(0x10b981)
                                             })
+                                            .border_1()
+                                            .border_color(rgba(0xffffff40))
                                             .text_xs()
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .text_color(rgb(0xffffff))
+                                            .font_weight(FontWeight::EXTRA_BOLD)
+                                            .text_color(rgb(0x052e16))
                                             .cursor_pointer()
-                                            .hover(|s| s.bg(rgb(0x059669)))
+                                            .hover(|s| s.bg(rgb(0x34d399)))
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 let state = this.app_state.clone();
                                                 AppState::spawn_mirror(state, cx);
@@ -260,9 +275,9 @@ impl Render for SettingsView {
                         div()
                             .p_3p5()
                             .rounded(px(12.0))
-                            .bg(rgba(0xffffffd8))
+                            .bg(rgba(0x181c26e6))
                             .border_1()
-                            .border_color(rgba(0x00000010))
+                            .border_color(rgba(0xffffff1a))
                             .flex()
                             .flex_col()
                             .gap_3()
@@ -281,14 +296,14 @@ impl Render for SettingsView {
                                                 div()
                                                     .text_xs()
                                                     .font_weight(FontWeight::SEMIBOLD)
-                                                    .text_color(rgb(0x1f2937))
+                                                    .text_color(rgb(0xf3f4f6))
                                                     .child("Hover Opacity"),
                                             )
                                             .child(
                                                 div()
                                                     .text_xs()
-                                                    .font_weight(FontWeight::BOLD)
-                                                    .text_color(rgb(0x059669))
+                                                    .font_weight(FontWeight::EXTRA_BOLD)
+                                                    .text_color(rgb(0x34d399))
                                                     .child(format!("{}%", opacity_pct)),
                                             ),
                                     )
@@ -319,7 +334,9 @@ impl Render for SettingsView {
                                                     .w(px(track_width))
                                                     .h(px(8.0))
                                                     .rounded(px(4.0))
-                                                    .bg(rgb(0xe5e7eb))
+                                                    .bg(rgb(0x262b3c))
+                                                    .border_1()
+                                                    .border_color(rgba(0xffffff18))
                                                     .relative()
                                                     .overflow_hidden()
                                                     .child(
@@ -342,7 +359,7 @@ impl Render for SettingsView {
                                         div()
                                             .text_xs()
                                             .font_weight(FontWeight::SEMIBOLD)
-                                            .text_color(rgb(0x1f2937))
+                                            .text_color(rgb(0xf3f4f6))
                                             .child("Animation Speed"),
                                     )
                                     .child(
@@ -351,24 +368,30 @@ impl Render for SettingsView {
                                                 let selected = config.animation_speed == speed;
                                                 div()
                                                     .id(speed.label())
-                                                    .px_2()
+                                                    .px_2p5()
                                                     .py_1()
-                                                    .rounded(px(6.0))
+                                                    .rounded(px(7.0))
+                                                    .border_1()
+                                                    .border_color(if selected {
+                                                        rgba(0x34d39988)
+                                                    } else {
+                                                        rgba(0xffffff18)
+                                                    })
                                                     .text_xs()
                                                     .font_weight(if selected {
-                                                        FontWeight::BOLD
+                                                        FontWeight::EXTRA_BOLD
                                                     } else {
                                                         FontWeight::MEDIUM
                                                     })
                                                     .bg(if selected {
-                                                        rgb(0x111827)
+                                                        rgb(0x10b981)
                                                     } else {
-                                                        rgb(0xf3f4f6)
+                                                        rgb(0x232838)
                                                     })
                                                     .text_color(if selected {
-                                                        rgb(0xffffff)
+                                                        rgb(0x052e16)
                                                     } else {
-                                                        rgb(0x4b5563)
+                                                        rgb(0xd1d5db)
                                                     })
                                                     .cursor_pointer()
                                                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -389,9 +412,9 @@ impl Render for SettingsView {
                         div()
                             .p_3p5()
                             .rounded(px(12.0))
-                            .bg(rgba(0xffffffd8))
+                            .bg(rgba(0x181c26e6))
                             .border_1()
-                            .border_color(rgba(0x00000010))
+                            .border_color(rgba(0xffffff1a))
                             .flex()
                             .flex_col()
                             .gap_3()
@@ -409,13 +432,13 @@ impl Render for SettingsView {
                                                 div()
                                                     .text_xs()
                                                     .font_weight(FontWeight::SEMIBOLD)
-                                                    .text_color(rgb(0x1f2937))
+                                                    .text_color(rgb(0xf3f4f6))
                                                     .child("Always on Top"),
                                             )
                                             .child(
                                                 div()
                                                     .text_xs()
-                                                    .text_color(rgb(0x6b7280))
+                                                    .text_color(rgb(0x9ca3af))
                                                     .child("Keep floating mirrors above other windows"),
                                             ),
                                     )
@@ -425,17 +448,23 @@ impl Render for SettingsView {
                                             .px_3()
                                             .py_1()
                                             .rounded(px(12.0))
+                                            .border_1()
+                                            .border_color(if config.always_on_top {
+                                                rgba(0x34d39988)
+                                            } else {
+                                                rgba(0xffffff22)
+                                            })
                                             .bg(if config.always_on_top {
                                                 rgb(0x10b981)
                                             } else {
-                                                rgb(0xd1d5db)
+                                                rgb(0x262b3c)
                                             })
                                             .text_xs()
-                                            .font_weight(FontWeight::BOLD)
+                                            .font_weight(FontWeight::EXTRA_BOLD)
                                             .text_color(if config.always_on_top {
-                                                rgb(0xffffff)
+                                                rgb(0x052e16)
                                             } else {
-                                                rgb(0x374151)
+                                                rgb(0x9ca3af)
                                             })
                                             .cursor_pointer()
                                             .on_click(cx.listener(|this, _, _, cx| {
@@ -458,7 +487,7 @@ impl Render for SettingsView {
                                         div()
                                             .text_xs()
                                             .font_weight(FontWeight::SEMIBOLD)
-                                            .text_color(rgb(0x1f2937))
+                                            .text_color(rgb(0xf3f4f6))
                                             .child("Default Mirror Size"),
                                     )
                                     .child(
@@ -469,22 +498,28 @@ impl Render for SettingsView {
                                                     .id(sz.label())
                                                     .px_2p5()
                                                     .py_1()
-                                                    .rounded(px(6.0))
+                                                    .rounded(px(7.0))
+                                                    .border_1()
+                                                    .border_color(if selected {
+                                                        rgba(0x34d39988)
+                                                    } else {
+                                                        rgba(0xffffff18)
+                                                    })
                                                     .text_xs()
                                                     .font_weight(if selected {
-                                                        FontWeight::BOLD
+                                                        FontWeight::EXTRA_BOLD
                                                     } else {
                                                         FontWeight::MEDIUM
                                                     })
                                                     .bg(if selected {
-                                                        rgb(0x111827)
+                                                        rgb(0x10b981)
                                                     } else {
-                                                        rgb(0xf3f4f6)
+                                                        rgb(0x232838)
                                                     })
                                                     .text_color(if selected {
-                                                        rgb(0xffffff)
+                                                        rgb(0x052e16)
                                                     } else {
-                                                        rgb(0x4b5563)
+                                                        rgb(0xd1d5db)
                                                     })
                                                     .cursor_pointer()
                                                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -509,7 +544,7 @@ impl Render for SettingsView {
                                         div()
                                             .text_xs()
                                             .font_weight(FontWeight::SEMIBOLD)
-                                            .text_color(rgb(0x1f2937))
+                                            .text_color(rgb(0xf3f4f6))
                                             .child("Target Frame Rate"),
                                     )
                                     .child(
@@ -527,22 +562,28 @@ impl Render for SettingsView {
                                                     })
                                                     .px_2p5()
                                                     .py_1()
-                                                    .rounded(px(6.0))
+                                                    .rounded(px(7.0))
+                                                    .border_1()
+                                                    .border_color(if selected {
+                                                        rgba(0x34d39988)
+                                                    } else {
+                                                        rgba(0xffffff18)
+                                                    })
                                                     .text_xs()
                                                     .font_weight(if selected {
-                                                        FontWeight::BOLD
+                                                        FontWeight::EXTRA_BOLD
                                                     } else {
                                                         FontWeight::MEDIUM
                                                     })
                                                     .bg(if selected {
-                                                        rgb(0x111827)
+                                                        rgb(0x10b981)
                                                     } else {
-                                                        rgb(0xf3f4f6)
+                                                        rgb(0x232838)
                                                     })
                                                     .text_color(if selected {
-                                                        rgb(0xffffff)
+                                                        rgb(0x052e16)
                                                     } else {
-                                                        rgb(0x4b5563)
+                                                        rgb(0xd1d5db)
                                                     })
                                                     .cursor_pointer()
                                                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -562,9 +603,9 @@ impl Render for SettingsView {
                         div()
                             .p_3p5()
                             .rounded(px(12.0))
-                            .bg(rgba(0xf3f4f6d8))
+                            .bg(rgba(0x13161fe6))
                             .border_1()
-                            .border_color(rgba(0x00000012))
+                            .border_color(rgba(0xffffff16))
                             .flex()
                             .flex_col()
                             .gap_2()
@@ -572,7 +613,7 @@ impl Render for SettingsView {
                                 div()
                                     .text_xs()
                                     .font_weight(FontWeight::BOLD)
-                                    .text_color(rgb(0x4b5563))
+                                    .text_color(rgb(0x9ca3af))
                                     .child("Debug Options"),
                             )
                             .child(
@@ -588,13 +629,13 @@ impl Render for SettingsView {
                                                 div()
                                                     .text_xs()
                                                     .font_weight(FontWeight::SEMIBOLD)
-                                                    .text_color(rgb(0x1f2937))
+                                                    .text_color(rgb(0xf3f4f6))
                                                     .child("Show FPS & Resolution Badge"),
                                             )
                                             .child(
                                                 div()
                                                     .text_xs()
-                                                    .text_color(rgb(0x6b7280))
+                                                    .text_color(rgb(0x9ca3af))
                                                     .child("Display live stream resolution and FPS overlay"),
                                             ),
                                     )
@@ -604,17 +645,23 @@ impl Render for SettingsView {
                                             .px_3()
                                             .py_1()
                                             .rounded(px(12.0))
+                                            .border_1()
+                                            .border_color(if config.show_fps_badge {
+                                                rgba(0x34d39988)
+                                            } else {
+                                                rgba(0xffffff22)
+                                            })
                                             .bg(if config.show_fps_badge {
                                                 rgb(0x10b981)
                                             } else {
-                                                rgb(0xd1d5db)
+                                                rgb(0x262b3c)
                                             })
                                             .text_xs()
-                                            .font_weight(FontWeight::BOLD)
+                                            .font_weight(FontWeight::EXTRA_BOLD)
                                             .text_color(if config.show_fps_badge {
-                                                rgb(0xffffff)
+                                                rgb(0x052e16)
                                             } else {
-                                                rgb(0x374151)
+                                                rgb(0x9ca3af)
                                             })
                                             .cursor_pointer()
                                             .on_click(cx.listener(|this, _, _, cx| {

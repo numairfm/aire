@@ -7,7 +7,7 @@ mod ui;
 mod window;
 
 use anyhow::Result;
-use gpui::{App, AppContext};
+use gpui::{App, AppContext, QuitMode};
 use gpui_platform::application;
 
 use crate::{
@@ -40,44 +40,47 @@ fn main() -> Result<()> {
     send_startup_notification();
     eprintln!("[AIRE] Running in system tray. Use tray icon to mirror windows or open Settings.");
 
-    // 5. Run GPUI application loop as a pure tray daemon (zero initial windows open)
-    application().run(move |cx: &mut App| {
-        let app_state = cx.new(|_| AppState::new(config, tray_handle));
+    // 5. Run GPUI application loop as a pure tray daemon (never quit when last window closes)
+    application()
+        .with_quit_mode(QuitMode::Explicit)
+        .run(move |cx: &mut App| {
+            cx.set_quit_mode(QuitMode::Explicit);
+            let app_state = cx.new(|_| AppState::new(config, tray_handle));
 
-        if let Some(rx) = tray_rx {
-            let state_for_loop = app_state.clone();
-            cx.spawn(async move |cx| {
-                while let Ok(cmd) = rx.recv().await {
-                    let state_entity = state_for_loop.clone();
-                    let _ = cx.update(|cx| match cmd {
-                        TrayCommand::SpawnMirror => {
-                            AppState::spawn_mirror(state_entity, cx);
-                        }
-                        TrayCommand::TogglePauseAll => {
-                            state_entity.update(cx, |state, cx| {
-                                state.toggle_pause_all(cx);
-                            });
-                        }
-                        TrayCommand::CloseAllMirrors => {
-                            state_entity.update(cx, |state, cx| {
-                                state.close_all_mirrors(cx);
-                            });
-                        }
-                        TrayCommand::OpenSettings => {
-                            AppState::open_settings(state_entity, cx);
-                        }
-                        TrayCommand::Quit => {
-                            state_entity.update(cx, |state, cx| {
-                                state.close_all_mirrors(cx);
-                            });
-                            cx.quit();
-                        }
-                    });
-                }
-            })
-            .detach();
-        }
-    });
+            if let Some(rx) = tray_rx {
+                let state_for_loop = app_state.clone();
+                cx.spawn(async move |cx| {
+                    while let Ok(cmd) = rx.recv().await {
+                        let state_entity = state_for_loop.clone();
+                        let _ = cx.update(|cx| match cmd {
+                            TrayCommand::SpawnMirror => {
+                                AppState::spawn_mirror(state_entity, cx);
+                            }
+                            TrayCommand::TogglePauseAll => {
+                                state_entity.update(cx, |state, cx| {
+                                    state.toggle_pause_all(cx);
+                                });
+                            }
+                            TrayCommand::CloseAllMirrors => {
+                                state_entity.update(cx, |state, cx| {
+                                    state.close_all_mirrors(cx);
+                                });
+                            }
+                            TrayCommand::OpenSettings => {
+                                AppState::open_settings(state_entity, cx);
+                            }
+                            TrayCommand::Quit => {
+                                state_entity.update(cx, |state, cx| {
+                                    state.close_all_mirrors(cx);
+                                });
+                                cx.quit();
+                            }
+                        });
+                    }
+                })
+                .detach();
+            }
+        });
 
     Ok(())
 }

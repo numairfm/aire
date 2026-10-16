@@ -426,19 +426,19 @@ impl Render for MirrorView {
             }
         }
 
-        // 2. Minimized Pill State
+        // 2. Minimized Pill State (Dark Frosted Glass + 4px White Frosty Border)
         if self.is_minimized {
             return div()
                 .size_full()
                 .flex()
                 .items_center()
                 .justify_between()
-                .px_2()
-                .bg(rgba(0xffffffea))
+                .px_3()
+                .bg(rgba(0x11131ae8))
                 .rounded(px(18.0))
                 .border_4()
                 .border_color(rgba(0xffffffea))
-                .shadow_lg()
+                .overflow_hidden()
                 .child(
                     div()
                         .flex()
@@ -459,13 +459,13 @@ impl Render for MirrorView {
                             div()
                                 .text_xs()
                                 .font_weight(FontWeight::BOLD)
-                                .text_color(rgb(0x374151))
+                                .text_color(rgb(0xf9fafb))
                                 .child("aire"),
                         )
                         .child(
                             div()
                                 .text_xs()
-                                .text_color(rgb(0x9ca3af))
+                                .text_color(rgb(0x6b7280))
                                 .child("⋮"),
                         ),
                 )
@@ -515,25 +515,25 @@ impl Render for MirrorView {
                         .child(
                             div()
                                 .text_xs()
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(rgb(0x4b5563))
-                                .hover(|s| s.text_color(rgb(0x111827)))
+                                .font_weight(FontWeight::BOLD)
+                                .text_color(rgb(0xd1d5db))
+                                .hover(|s| s.text_color(rgb(0xffffff)))
                                 .child("restore ↗"),
                         ),
                 )
                 .into_any_element();
         }
 
-        // 3. Source Window Closed State
+        // 3. Source Window Closed State (Dark Frosted Glass)
         if self.source_closed {
             return div()
                 .size_full()
                 .relative()
-                .bg(rgba(0xffffff40))
+                .bg(rgba(0x0f1117e8))
                 .rounded(px(14.0))
                 .border_4()
                 .border_color(rgba(0xffffffea))
-                .shadow_xl()
+                .overflow_hidden()
                 .flex()
                 .flex_col()
                 .items_center()
@@ -547,13 +547,13 @@ impl Render for MirrorView {
                     div()
                         .text_sm()
                         .font_weight(FontWeight::BOLD)
-                        .text_color(rgb(0x1f2937))
+                        .text_color(rgb(0xf9fafb))
                         .child("Source window closed"),
                 )
                 .child(
                     div()
                         .text_xs()
-                        .text_color(rgb(0x4b5563))
+                        .text_color(rgb(0x9ca3af))
                         .child("The mirrored window was closed."),
                 )
                 .child(
@@ -566,34 +566,36 @@ impl Render for MirrorView {
                             div()
                                 .id("btn-switch-closed")
                                 .px_3()
-                                .py_1()
-                                .rounded(px(6.0))
+                                .py_1p5()
+                                .rounded(px(8.0))
                                 .bg(rgb(0x10b981))
                                 .text_xs()
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(rgb(0xffffff))
+                                .font_weight(FontWeight::BOLD)
+                                .text_color(rgb(0x06281e))
                                 .cursor_pointer()
+                                .hover(|s| s.bg(rgb(0x34d399)))
                                 .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                                     cx.stop_propagation();
                                 })
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.trigger_switch_source(cx);
                                 }))
-                                .child("Pick Another Window"),
+                                .child("Switch Window"),
                         )
                         .child(
                             div()
                                 .id("btn-exit-closed")
                                 .px_3()
-                                .py_1()
-                                .rounded(px(6.0))
-                                .bg(rgba(0xffffffea))
+                                .py_1p5()
+                                .rounded(px(8.0))
+                                .bg(rgba(0x262b3cd9))
                                 .border_1()
-                                .border_color(rgba(0x00000015))
+                                .border_color(rgba(0xffffff38))
                                 .text_xs()
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(rgb(0x111827))
+                                .font_weight(FontWeight::BOLD)
+                                .text_color(rgb(0xf9fafb))
                                 .cursor_pointer()
+                                .hover(|s| s.bg(rgba(0x374151e8)).border_color(rgba(0xffffff66)))
                                 .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                                     cx.stop_propagation();
                                 })
@@ -606,16 +608,16 @@ impl Render for MirrorView {
                 .into_any_element();
         }
 
-        // 4. Error State
+        // 4. Error State (Dark Frosted Glass)
         if let Some(ref err) = self.error_message {
             return div()
                 .size_full()
                 .relative()
-                .bg(rgba(0xffffff40))
+                .bg(rgba(0x0f1117e8))
                 .rounded(px(14.0))
                 .border_4()
                 .border_color(rgba(0xffffffea))
-                .shadow_xl()
+                .overflow_hidden()
                 .flex()
                 .flex_col()
                 .items_center()
@@ -629,13 +631,13 @@ impl Render for MirrorView {
                     div()
                         .text_sm()
                         .font_weight(FontWeight::BOLD)
-                        .text_color(rgb(0x991b1b))
+                        .text_color(rgb(0xf87171))
                         .child("Capture could not start"),
                 )
                 .child(
                     div()
                         .text_xs()
-                        .text_color(rgb(0x374151))
+                        .text_color(rgb(0xd1d5db))
                         .child(err.clone()),
                 )
                 .child(
@@ -643,14 +645,14 @@ impl Render for MirrorView {
                         .id("btn-exit-error")
                         .mt_2()
                         .px_3()
-                        .py_1()
-                        .rounded(px(6.0))
-                        .bg(rgba(0xffffffea))
+                        .py_1p5()
+                        .rounded(px(8.0))
+                        .bg(rgba(0x262b3cd9))
                         .border_1()
-                        .border_color(rgba(0x00000015))
+                        .border_color(rgba(0xffffff38))
                         .text_xs()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(rgb(0x111827))
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(rgb(0xf9fafb))
                         .cursor_pointer()
                         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                             cx.stop_propagation();
@@ -683,7 +685,6 @@ impl Render for MirrorView {
             let elapsed_ms = start.elapsed().as_secs_f32() * 1000.0;
             let duration_f32 = (anim_ms as f32).max(1.0);
             let progress = (elapsed_ms / duration_f32).clamp(0.0, 1.0);
-            // Smooth cubic ease-out
             let eased = 1.0 - (1.0 - progress).powi(3);
             self.current_hover_t =
                 self.hover_transition_from + (target_t - self.hover_transition_from) * eased;
@@ -701,15 +702,16 @@ impl Render for MirrorView {
             1.0 - self.current_hover_t * (1.0 - config.hover_opacity.clamp(0.05, 1.0));
         let hud_opacity = self.current_hover_t;
 
+        // Note: No outer box-shadow on the root full-surface div so KWin Wayland never leaves
+        // bottom-border shadow bleed trails when moving the window across the desktop.
         div()
             .id("mirror-root")
             .size_full()
             .relative()
-            .bg(rgba(0xffffff28))
+            .bg(rgba(0x0d0f1440))
             .rounded(px(14.0))
             .border_4()
             .border_color(rgba(0xffffffea))
-            .shadow_xl()
             .overflow_hidden()
             .on_mouse_down(gpui::MouseButton::Left, |_, window, _| {
                 window.start_window_move();
@@ -772,16 +774,17 @@ impl Render for MirrorView {
                     } else {
                         div()
                             .size_full()
+                            .bg(rgba(0x0f1117cc))
                             .flex()
                             .flex_col()
                             .items_center()
                             .justify_center()
                             .gap_1()
-                            .text_color(rgb(0x4b5563))
+                            .text_color(rgb(0xd1d5db))
                             .child(
                                 div()
                                     .text_sm()
-                                    .font_weight(FontWeight::MEDIUM)
+                                    .font_weight(FontWeight::SEMIBOLD)
                                     .child("Connecting to window..."),
                             )
                             .into_any_element()
@@ -902,7 +905,7 @@ impl Render for MirrorView {
                     .child(
                         div()
                             .size(px(10.0))
-                            .opacity(hud_opacity * 0.75)
+                            .opacity(hud_opacity * 0.85)
                             .flex()
                             .flex_col()
                             .items_end()
@@ -910,32 +913,35 @@ impl Render for MirrorView {
                             .gap_0p5()
                             .child(
                                 div().flex().gap_0p5().child(
-                                    div().size(px(2.0)).rounded_full().bg(rgb(0x4b5563)),
+                                    div().size(px(2.5)).rounded_full().bg(rgb(0xf9fafb)),
                                 ),
                             )
                             .child(
                                 div()
                                     .flex()
                                     .gap_0p5()
-                                    .child(div().size(px(2.0)).rounded_full().bg(rgb(0x4b5563)))
-                                    .child(div().size(px(2.0)).rounded_full().bg(rgb(0x4b5563))),
+                                    .child(div().size(px(2.5)).rounded_full().bg(rgb(0xf9fafb)))
+                                    .child(div().size(px(2.5)).rounded_full().bg(rgb(0xf9fafb))),
                             ),
                     ),
             )
-            // Optional Debug FPS & Resolution Badge (controlled by Debug Options in Settings)
+            // Optional Debug FPS & Resolution Badge
             .when(config.show_fps_badge, |el| {
                 el.child(
                     div()
                         .absolute()
-                        .bottom_2()
-                        .left_2()
-                        .px_2()
+                        .bottom_2p5()
+                        .left_2p5()
+                        .px_2p5()
                         .py_1()
-                        .rounded(px(6.0))
-                        .bg(rgba(0x00000088))
+                        .rounded(px(8.0))
+                        .bg(rgba(0x11131acc))
+                        .border_1()
+                        .border_color(rgba(0xffffff38))
                         .text_xs()
-                        .text_color(rgb(0xf3f4f6))
-                        .opacity(if is_hovered { 0.95 } else { 0.55 })
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(rgb(0xf9fafb))
+                        .opacity(if is_hovered { 0.98 } else { 0.65 })
                         .child(format!(
                             "{}×{} • {:.0} fps{}",
                             self.source_width,
@@ -945,31 +951,31 @@ impl Render for MirrorView {
                         )),
                 )
             })
-            // Frosty Glass Controls Overlay (Top-Right: Switch Source, Pause/Resume, Minimize, Close)
+            // Frosted Glass Window Controls Overlay (Top-Right: Switch Source, Minimize, Close)
             .child(
                 div()
                     .absolute()
-                    .top_2()
-                    .right_2()
+                    .top_2p5()
+                    .right_2p5()
                     .flex()
                     .items_center()
-                    .gap_1p5()
+                    .gap_2()
                     .opacity(hud_opacity)
-                    // Switch Source button (`⇄`)
+                    // Switch Source button (`⇄`) — Frosted glass pill with bold centered icon
                     .child(
                         div()
                             .id("btn-switch-source")
                             .flex()
                             .items_center()
                             .justify_center()
-                            .size(px(26.0))
-                            .rounded(px(13.0))
-                            .bg(rgba(0xffffffea))
+                            .size(px(30.0))
+                            .rounded(px(15.0))
+                            .bg(rgba(0x161922bf))
                             .border_1()
-                            .border_color(rgba(0x00000018))
+                            .border_color(rgba(0xffffff55))
                             .shadow_sm()
                             .cursor_pointer()
-                            .hover(|s| s.bg(rgba(0xffffffff)).shadow_md())
+                            .hover(|s| s.bg(rgba(0x262b3ce6)).border_color(rgba(0xffffffaa)))
                             .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                                 cx.stop_propagation();
                             })
@@ -978,27 +984,31 @@ impl Render for MirrorView {
                             }))
                             .child(
                                 div()
-                                    .text_xs()
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(rgb(0x374151))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .text_size(px(15.0))
+                                    .line_height(px(15.0))
+                                    .font_weight(FontWeight::EXTRA_BOLD)
+                                    .text_color(rgb(0xffffff))
                                     .child("⇄"),
                             ),
                     )
-                    // Minimize to pill button (`—`)
+                    // Minimize to pill button (`—`) — Frosted glass pill with bold centered geometric bar
                     .child(
                         div()
                             .id("btn-minimize")
                             .flex()
                             .items_center()
                             .justify_center()
-                            .size(px(26.0))
-                            .rounded(px(13.0))
-                            .bg(rgba(0xffffffea))
+                            .size(px(30.0))
+                            .rounded(px(15.0))
+                            .bg(rgba(0x161922bf))
                             .border_1()
-                            .border_color(rgba(0x00000018))
+                            .border_color(rgba(0xffffff55))
                             .shadow_sm()
                             .cursor_pointer()
-                            .hover(|s| s.bg(rgba(0xffffffff)).shadow_md())
+                            .hover(|s| s.bg(rgba(0x262b3ce6)).border_color(rgba(0xffffffaa)))
                             .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                                 cx.stop_propagation();
                             })
@@ -1016,26 +1026,27 @@ impl Render for MirrorView {
                             }))
                             .child(
                                 div()
-                                    .w(px(10.0))
-                                    .h(px(2.0))
-                                    .bg(rgb(0x374151)),
+                                    .w(px(12.0))
+                                    .h(px(2.5))
+                                    .rounded(px(1.25))
+                                    .bg(rgb(0xffffff)),
                             ),
                     )
-                    // Close mirror button (`✕`)
+                    // Close mirror button (`✕`) — Frosted glass pill with bold centered X
                     .child(
                         div()
                             .id("btn-close")
                             .flex()
                             .items_center()
                             .justify_center()
-                            .size(px(26.0))
-                            .rounded(px(13.0))
-                            .bg(rgba(0xffffffea))
+                            .size(px(30.0))
+                            .rounded(px(15.0))
+                            .bg(rgba(0x161922bf))
                             .border_1()
-                            .border_color(rgba(0x00000018))
+                            .border_color(rgba(0xffffff55))
                             .shadow_sm()
                             .cursor_pointer()
-                            .hover(|s| s.bg(rgba(0xfff1f2fa)).border_color(rgba(0xe11d4840)))
+                            .hover(|s| s.bg(rgba(0xe11d48d9)).border_color(rgba(0xffb4c4aa)))
                             .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                                 cx.stop_propagation();
                             })
@@ -1044,9 +1055,13 @@ impl Render for MirrorView {
                             }))
                             .child(
                                 div()
-                                    .text_xs()
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(rgb(0x374151))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .text_size(px(14.0))
+                                    .line_height(px(14.0))
+                                    .font_weight(FontWeight::EXTRA_BOLD)
+                                    .text_color(rgb(0xffffff))
                                     .child("✕"),
                             ),
                     ),
