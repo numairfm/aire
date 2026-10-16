@@ -4,8 +4,8 @@ use std::{
 };
 
 use gpui::{
-    canvas, div, point, prelude::*, px, rgb, size, Context, Entity, FontWeight, PathBuilder,
-    Render, RenderImage, ResizeEdge, Rgba, ScrollWheelEvent, Task, WeakEntity, Window,
+    canvas, div, point, prelude::*, px, rgb, size, Context, Entity, FontWeight, MouseMoveEvent,
+    PathBuilder, Render, RenderImage, ResizeEdge, Rgba, ScrollWheelEvent, Task, WeakEntity, Window,
 };
 
 use crate::{
@@ -221,7 +221,6 @@ impl MirrorView {
 
                         let update_res = this.update(cx, |view, cx| {
                             if let Some(old_img) = view.current_image.replace(frame.render_image) {
-                                cx.drop_image(old_img.clone(), None);
                                 if view.retired_images.len() >= 2 {
                                     view.retired_images.remove(0);
                                 }
@@ -229,13 +228,6 @@ impl MirrorView {
                             }
                             view.source_width = frame.width;
                             view.source_height = frame.height;
-                            if frame.height > 0 {
-                                let frame_aspect = frame.width as f32 / frame.height as f32;
-                                if (view.aspect_ratio - frame_aspect).abs() > 0.005 {
-                                    view.aspect_ratio = frame_aspect;
-                                    view.needs_aspect_adaptation = true;
-                                }
-                            }
                             if let Some(fps) = new_fps {
                                 view.fps = fps;
                             }
@@ -396,8 +388,10 @@ impl Render for MirrorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let win_id = window.window_handle().window_id().as_u64();
 
-        // Evict all retired frame textures from this window's WGPU sprite atlas before painting
-        for old_img in self.retired_images.drain(..) {
+        // Evict older retired frame textures from this window's WGPU sprite atlas before painting.
+        // We keep 1 previous frame so in-flight GPU rasterization never encounters an evicted tile.
+        while self.retired_images.len() > 1 {
+            let old_img = self.retired_images.remove(0);
             cx.drop_image(old_img, Some(window));
         }
 
@@ -780,6 +774,9 @@ impl Render for MirrorView {
             .border_1()
             .border_color(outline_color)
             .overflow_hidden()
+            .on_mouse_move(cx.listener(|_, _: &MouseMoveEvent, _, cx| {
+                cx.notify();
+            }))
             .on_mouse_down(gpui::MouseButton::Left, |_, window, _| {
                 window.start_window_move();
             })

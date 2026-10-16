@@ -346,11 +346,15 @@ fn run_pipewire_loop(
             };
             let needed_dst_bytes = row_bytes * (height as usize);
 
-            if slice.len() < chunk_size || chunk_size < needed_src_bytes {
+            let available_bytes = if chunk_size >= needed_src_bytes {
+                chunk_size
+            } else if slice.len() >= needed_src_bytes {
+                slice.len()
+            } else {
                 return;
-            }
+            };
 
-            let raw_bytes = &slice[..chunk_size];
+            let raw_bytes = &slice[..available_bytes];
             let video_fmt = ctx.format.format();
 
             // GPUI's WGPU atlas texture expects BGRA8 data.
